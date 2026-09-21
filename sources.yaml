@@ -1,0 +1,59 @@
+# Fuentes del radar. type: rss | remoteok | reddit | hn
+# Los feeds RSS de Upwork requieren que estés logueado y generes el link desde
+# una búsqueda guardada: Upwork > Find Work > guardá la búsqueda > copiá el RSS.
+sources:
+  # ---------- Upwork (pegá tus RSS de búsquedas guardadas) ----------
+  - name: upwork-n8n
+    type: rss
+    enabled: false
+    url: "PEGA_ACA_TU_RSS_DE_UPWORK_n8n"
+  - name: upwork-scraping
+    type: rss
+    enabled: false
+    url: "PEGA_ACA_TU_RSS_DE_UPWORK_scraping"
+  - name: upwork-data
+    type: rss
+    enabled: false
+    url: "PEGA_ACA_TU_RSS_DE_UPWORK_dbt_bigquery"
+
+  # ---------- Feeds abiertos (funcionan sin cuenta) ----------
+  - name: remoteok
+    type: remoteok
+    enabled: true
+    url: "https://remoteok.com/api"
+  - name: weworkremotely-prog
+    type: rss
+    enabled: true
+    url: "https://weworkremotely.com/categories/remote-programming-jobs.rss"
+  - name: weworkremotely-contract
+    type: rss
+    enabled: true
+    url: "https://weworkremotely.com/categories/remote-contract-jobs.rss"
+
+  # ---------- Reddit (JSON público, sin credenciales) ----------
+  - name: reddit-forhire
+    type: reddit
+    enabled: true
+    url: "https://www.reddit.com/r/forhire/new.json?limit=100"
+  - name: reddit-slavelabour
+    type: reddit
+    enabled: true
+    url: "https://www.reddit.com/r/slavelabour/new.json?limit=100"
+  - name: reddit-jobbit
+    type: reddit
+    enabled: true
+    url: "https://www.reddit.com/r/jobbit/new.json?limit=100"
+  - name: reddit-n8n
+    type: reddit
+    enabled: true
+    url: "https://www.reddit.com/r/n8n/new.json?limit=50"
+  - name: reddit-datascience-jobs
+    type: reddit
+    enabled: false
+    url: "https://www.reddit.com/r/DataScienceJobs/new.json?limit=50"
+
+  # ---------- Hacker News: hilo mensual de freelance ----------
+  - name: hn-seeking-freelancer
+    type: hn
+    enabled: true
+    url: ""

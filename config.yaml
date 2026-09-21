@@ -1,0 +1,9 @@
+# Umbrales del radar. Ajustalos con los datos de 04_log_proyectos.md.
+min_score: 48            # 0-100. Si recibís ruido, subilo a 60. Si recibís poco, bajalo a 40.
+min_budget_usd: 120      # piso duro de 05_pricing_y_limites.md
+max_tickets_per_run: 12  # tope de alertas por corrida (protege tu atención y el rate limit)
+lookback_hours: 72       # 36h dejaba a weworkremotely en 0 tickets (postea cada ~10-14 días)
+memory_dir: memoria
+db_path: data/radar.sqlite
+http_timeout: 20
+user_agent: "radar-freelance/1.0 (+https://santiagomalak.is-a.dev)"

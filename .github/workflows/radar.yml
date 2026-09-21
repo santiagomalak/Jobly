@@ -1,0 +1,40 @@
+name: radar
+
+on:
+  schedule:
+    # 09:00 y 18:00 ART (UTC-3) = 12:00 y 21:00 UTC
+    - cron: "0 12,21 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      # data/radar.sqlite es la DB de dedup. No vive en el repo (ensuciaría
+      # los clones locales con cada corrida) — se cachea entre ejecuciones.
+      # Cada corrida guarda una key nueva; restore-keys trae la más reciente.
+      - uses: actions/cache@v4
+        with:
+          path: data/radar.sqlite
+          key: radar-db-${{ github.run_id }}
+          restore-keys: |
+            radar-db-
+
+      - name: radar run
+        env:
+          DISCORD_WEBHOOK_RADAR: ${{ secrets.DISCORD_WEBHOOK_RADAR }}
+          DISCORD_WEBHOOK_PROPUESTAS: ${{ secrets.DISCORD_WEBHOOK_PROPUESTAS }}
+          DISCORD_WEBHOOK_ERRORES: ${{ secrets.DISCORD_WEBHOOK_ERRORES }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
+        run: python -m radar.main run

@@ -1,0 +1,69 @@
+{
+  "name": "Radar Freelance — Ingesta manual por webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "radar-ticket",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Webhook /radar-ticket",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-360, 300],
+      "webhookId": "radar-ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza cualquier payload a la forma que entiende el radar.\n// Sirve para empujar a mano un ticket que viste en Twitter, un grupo de WhatsApp\n// o un mail, y que pase por el mismo motor de scoring y pitch.\nconst b = $input.first().json.body || $input.first().json;\nreturn [{\n  json: {\n    source: b.source || 'manual',\n    title: (b.title || '').slice(0, 300),\n    url: b.url || '',\n    description: (b.description || b.text || '').slice(0, 4000),\n    raw_budget: b.budget || ''\n  }\n}];"
+      },
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "Normalizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-120, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\santi\\Documents\\radar-freelance && python scripts/ingest_one.py {{ JSON.stringify(JSON.stringify($json)) }}"
+      },
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Evaluar + pitch",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_PROPUESTAS }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: 'Radar (manual)', content: ($json.stdout || 'sin salida').slice(0, 1900) }) }}",
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Mandar a Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [380, 300]
+    }
+  ],
+  "connections": {
+    "Webhook /radar-ticket": {
+      "main": [[{ "node": "Normalizar", "type": "main", "index": 0 }]]
+    },
+    "Normalizar": {
+      "main": [[{ "node": "Evaluar + pitch", "type": "main", "index": 0 }]]
+    },
+    "Evaluar + pitch": {
+      "main": [[{ "node": "Mandar a Discord", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "radar-freelance" },
+  "tags": [{ "name": "radar" }]
+}

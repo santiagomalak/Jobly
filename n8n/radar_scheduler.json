@@ -1,0 +1,110 @@
+{
+  "name": "Radar Freelance — Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Cada 2 horas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\santi\\Documents\\radar-freelance && python -m radar.main run"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Correr radar",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-120, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-exit",
+              "leftValue": "={{ $json.exitCode }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "¿Falló?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_WEBHOOK_ERRORES }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: 'Radar', content: '🔴 **El radar falló**\\n```\\n' + ($json.stderr || $json.stdout || 'sin salida').slice(0, 1500) + '\\n```' }) }}",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Avisar error a Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [380, 200]
+    },
+    {
+      "parameters": {},
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "OK (el script ya notificó)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [380, 400]
+    }
+  ],
+  "connections": {
+    "Cada 2 horas": {
+      "main": [[{ "node": "Correr radar", "type": "main", "index": 0 }]]
+    },
+    "Correr radar": {
+      "main": [[{ "node": "¿Falló?", "type": "main", "index": 0 }]]
+    },
+    "¿Falló?": {
+      "main": [
+        [{ "node": "Avisar error a Discord", "type": "main", "index": 0 }],
+        [{ "node": "OK (el script ya notificó)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "radar-freelance"
+  },
+  "tags": [{ "name": "radar" }]
+}
