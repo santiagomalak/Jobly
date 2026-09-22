@@ -1,6 +1,10 @@
-# CLAUDE.md — radar-freelance
+# CLAUDE.md — Jobly (radar-freelance)
 
 Memoria de proyecto para Claude Code. Leé esto antes de tocar nada.
+
+`Jobly` es el nombre del proyecto/repo. `radar-freelance` sigue siendo la descripción de qué
+hace. El paquete Python se sigue llamando `radar/` (`python -m radar.main ...`) — no se
+renombró para no romper todo lo demás; es puramente cosmético en README/CLAUDE.md por ahora.
 
 ---
 
@@ -63,6 +67,9 @@ python -m radar.main run --dry       # corrida sin tocar Discord, imprime en con
 python -m radar.main run             # corrida real
 python -m radar.main stats
 python -m radar.main test-discord
+python -m radar.main pitch <url>              # regenera el pitch de un ticket guardado
+python -m radar.main marcar <fingerprint> <estado>  # nuevo|postulado|respondido|ganado|perdido
+                                               # también agrega la entrada en memoria/04_log_proyectos.md
 python scripts/selftest.py           # motor con fixtures, sin internet. Es el test suite.
 python scripts/ingest_one.py --interactivo   # evaluar un ticket a mano
 ```

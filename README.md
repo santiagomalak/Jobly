@@ -1,6 +1,6 @@
-# radar-freelance
+# Jobly
 
-Sistema de prospección autónoma: monitorea feeds de proyectos freelance, los puntúa contra
+**Radar de prospección freelance.** Sistema de prospección autónoma: monitorea feeds de proyectos freelance, los puntúa contra
 un sistema de memoria modular en `.md`, redacta la propuesta comercial y te la deja lista
 para copiar en Discord.
 

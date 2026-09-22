@@ -4,7 +4,8 @@
   python -m radar.main run --dry      # sin enviar a Discord, imprime en consola
   python -m radar.main doctor         # verifica config, memoria, LLMs y webhook
   python -m radar.main stats          # métricas acumuladas
-  python -m radar.main pitch <url>    # regenera el pitch de un ticket guardado
+  python -m radar.main pitch <url>              # regenera el pitch de un ticket guardado
+  python -m radar.main marcar <fingerprint> <estado>  # nuevo|postulado|respondido|ganado|perdido
 """
 from __future__ import annotations
 
@@ -152,6 +153,76 @@ def cmd_stats(_: argparse.Namespace) -> int:
     return 0
 
 
+ESTADOS = ("nuevo", "postulado", "respondido", "ganado", "perdido")
+
+
+def _append_log_proyectos(root: Path, row, estado: str) -> None:
+    """Agrega una entrada de postulación a memoria/04_log_proyectos.md (pendiente #5 de CLAUDE.md)."""
+    from datetime import date
+
+    log_path = root / "memoria" / "04_log_proyectos.md"
+    if not log_path.exists():
+        log.warning("no existe %s, no se registra la marca", log_path)
+        return
+
+    presupuesto = f"USD {row['budget_usd']}" if row["budget_usd"] else "no publicado"
+    entrada = (
+        f"\n### [{row['fingerprint'][:8]}] {date.today().isoformat()} — {row['title']}\n"
+        f"- Fuente: {row['source']}   | URL: {row['url']}\n"
+        f"- Módulo activado: {row['module']}\n"
+        f"- Score del radar: {row['score']}\n"
+        f"- Presupuesto publicado: {presupuesto}  | Mi cotización: \n"
+        f"- Enviado: {date.today().isoformat() if estado != 'nuevo' else ''}  | Respuesta: \n"
+        f"- Estado: {estado}\n"
+        f"- Resultado / motivo de pérdida: \n"
+        f"- APRENDIZAJE (1 línea accionable): \n"
+    )
+    contenido = log_path.read_text(encoding="utf-8")
+    marcador = "\n## Proyectos entregados"
+    if marcador in contenido:
+        contenido = contenido.replace(marcador, entrada + marcador, 1)
+    else:
+        contenido += entrada
+    log_path.write_text(contenido, encoding="utf-8")
+
+
+def cmd_marcar(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    root = Path(cfg["root"])
+    store = Store(root / cfg["db_path"])
+    row = store.get(args.fingerprint)
+    if row is None:
+        print(f"No encontré ningún ticket con fingerprint '{args.fingerprint}'")
+        store.close()
+        return 1
+    store.marcar(args.fingerprint, args.estado)
+    _append_log_proyectos(root, row, args.estado)
+    store.close()
+    print(f"[{row['fingerprint'][:8]}] {row['title'][:60]} -> {args.estado}")
+    print(f"Registrado en memoria/04_log_proyectos.md")
+    return 0
+
+
+def cmd_pitch(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    root = Path(cfg["root"])
+    store = Store(root / cfg["db_path"])
+    row = store.get_by_url(args.url)
+    store.close()
+    if row is None:
+        print(f"No encontré ningún ticket guardado con url '{args.url}'")
+        return 1
+
+    data = json.loads(row["payload"])
+    data.pop("fingerprint", None)
+    ticket = Ticket(**data)
+    mem = Memory(root / cfg["memory_dir"])
+    build_pitch(ticket, mem)
+    print(f"motor: {ticket.pitch_engine}\n")
+    print(ticket.pitch)
+    return 0
+
+
 def cmd_test_discord(_: argparse.Namespace) -> int:
     webhook = discord_webhook("propuestas")
     if not webhook:
@@ -176,6 +247,15 @@ def main() -> int:
     sub.add_parser("doctor", help="diagnóstico de configuración").set_defaults(func=cmd_doctor)
     sub.add_parser("stats", help="métricas").set_defaults(func=cmd_stats)
     sub.add_parser("test-discord", help="prueba el webhook").set_defaults(func=cmd_test_discord)
+
+    p_marcar = sub.add_parser("marcar", help="actualiza el estado de un ticket y lo registra en el log")
+    p_marcar.add_argument("fingerprint")
+    p_marcar.add_argument("estado", choices=ESTADOS)
+    p_marcar.set_defaults(func=cmd_marcar)
+
+    p_pitch = sub.add_parser("pitch", help="regenera el pitch de un ticket guardado")
+    p_pitch.add_argument("url")
+    p_pitch.set_defaults(func=cmd_pitch)
 
     args = parser.parse_args()
     return args.func(args)

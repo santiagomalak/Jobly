@@ -1,7 +1,7 @@
 """Cascada de LLMs: gratis primero, siempre con red de seguridad.
 
 Orden de intento (el primero que responda gana):
-  1. Groq            — free tier generoso y rapidísimo (llama 3.3 70b)
+  1. Groq            — free tier generoso y rapidísimo (gpt-oss-120b)
   2. OpenRouter free — modelos con sufijo :free, sin costo
   3. Ollama local    — corre en tu PC, sin internet ni límite
   4. Plantilla       — pitch armado con reglas, sin IA. NUNCA falla.
@@ -35,14 +35,19 @@ def _groq(system: str, user: str) -> str | None:
     key = os.environ.get("GROQ_API_KEY", "").strip()
     if not key:
         return None
-    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={
             "model": model,
             "temperature": 0.4,
-            "max_tokens": 700,
+            # gpt-oss es un modelo "razonador": gasta tokens en un campo interno
+            # `reasoning` antes de escribir `content`. Con max_tokens chico el
+            # presupuesto se lo come el razonamiento y content queda vacío.
+            # reasoning_effort=low + margen de tokens evita eso.
+            "max_tokens": 1200,
+            "reasoning_effort": "low",
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

@@ -85,5 +85,17 @@ class Store:
         )
         self.conn.commit()
 
+    def get(self, fingerprint: str) -> sqlite3.Row | None:
+        cur = self.conn.execute(
+            "SELECT * FROM tickets WHERE fingerprint = ?", (fingerprint,)
+        )
+        return cur.fetchone()
+
+    def get_by_url(self, url: str) -> sqlite3.Row | None:
+        cur = self.conn.execute(
+            "SELECT * FROM tickets WHERE url = ? ORDER BY seen_at DESC LIMIT 1", (url,)
+        )
+        return cur.fetchone()
+
     def close(self) -> None:
         self.conn.close()
