@@ -1,4 +1,4 @@
-# Fuentes del radar. type: rss | remoteok | reddit | hn
+# Fuentes del radar. type: rss | remoteok | reddit | hn | sheet
 # Upwork discontinuó RSS para búsquedas de trabajo el 20/08/2024 (confirmado en su
 # Help Center: "RSS deprecation"). /ab/feed/jobs/rss devuelve 404 sin importar qué
 # búsqueda guardes. No hay URL que pegar acá — el único camino ToS-compliant que
@@ -48,3 +48,19 @@ sources:
     type: hn
     enabled: true
     url: ""
+
+  # ---------- Google Sheets: carga manual de leads ----------
+  # Google Sheets > Archivo > Compartir > Publicar en la web > seleccionar la hoja >
+  # formato CSV > Publicar. Pegá acá el link que te da (termina en /pub?output=csv).
+  # Columnas esperadas (cualquier orden, ES o EN): title/titulo, url/link (obligatoria),
+  # description/descripcion, budget/presupuesto (opcional).
+  - name: sheet-leads
+    type: sheet
+    enabled: false
+    url: "PEGA_ACA_EL_LINK_CSV_DE_TU_GOOGLE_SHEET"
+
+  # ---------- Remotive: API pública (uso personal, no republicar a terceros) ----------
+  - name: remotive
+    type: remotive
+    enabled: true
+    url: "https://remotive.com/api/remote-jobs"

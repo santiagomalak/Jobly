@@ -5,7 +5,9 @@ se loguea y se sigue con las demás.
 """
 from __future__ import annotations
 
+import csv
 import html
+import io
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -98,6 +100,35 @@ def fetch_remoteok(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
 
 
 # --------------------------------------------------------------------------
+# Remotive (API pública). Uso personal permitido; NO republicar sus avisos a
+# terceros ni usarlos para juntar leads externos (rompe sus ToS). Máx. ~4
+# requests/día según piden ellos mismos — nuestro cron corre 2 veces/día, ok.
+# --------------------------------------------------------------------------
+def fetch_remotive(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    r = requests.get(
+        url or "https://remotive.com/api/remote-jobs",
+        headers={"User-Agent": cfg.get("user_agent")},
+        timeout=int(cfg.get("http_timeout", 20)),
+    )
+    r.raise_for_status()
+    data = r.json()
+    tickets: list[Ticket] = []
+    for job in data.get("jobs", []):
+        tickets.append(
+            Ticket(
+                source=name,
+                title=_clean(job.get("title", "")),
+                url=job.get("url", ""),
+                description=_clean(job.get("description", ""))[:4000],
+                published=job.get("publication_date", ""),
+                raw_budget=job.get("salary") or "",
+                tags=[str(t) for t in job.get("tags", [])],
+            )
+        )
+    return tickets
+
+
+# --------------------------------------------------------------------------
 # Reddit (JSON público, sin credenciales)
 # --------------------------------------------------------------------------
 def fetch_reddit(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
@@ -163,11 +194,73 @@ def fetch_hn_freelance(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]
     return tickets
 
 
+# --------------------------------------------------------------------------
+# Google Sheets / Excel exportado como CSV (carga manual de leads)
+# --------------------------------------------------------------------------
+_SHEET_COLUMNS = {
+    "title": ("title", "titulo", "título", "puesto"),
+    "url": ("url", "link", "enlace"),
+    "description": ("description", "descripcion", "descripción", "detalle"),
+    "budget": ("budget", "presupuesto", "pago", "salary"),
+}
+
+
+def _pick_column(headers: list[str], names: tuple[str, ...]) -> str | None:
+    lowered = {h.lower().strip(): h for h in headers}
+    for name in names:
+        if name in lowered:
+            return lowered[name]
+    return None
+
+
+def fetch_sheet(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    """Lee un Google Sheet publicado como CSV (Archivo > Compartir > Publicar en la
+    web > CSV, o un Excel exportado a CSV y hosteado en cualquier URL pública).
+
+    Columnas esperadas, en cualquier orden, español o inglés: title/titulo (opcional,
+    se infiere de la descripción si falta), url/link (obligatoria), description/
+    descripcion, budget/presupuesto (opcional). No filtra por antigüedad: es carga
+    manual, se asume que lo que está en la planilla es relevante.
+    """
+    r = requests.get(url, timeout=int(cfg.get("http_timeout", 20)))
+    r.raise_for_status()
+    reader = csv.DictReader(io.StringIO(r.text))
+    if not reader.fieldnames:
+        raise RuntimeError("el CSV no tiene encabezados")
+
+    col_title = _pick_column(reader.fieldnames, _SHEET_COLUMNS["title"])
+    col_url = _pick_column(reader.fieldnames, _SHEET_COLUMNS["url"])
+    col_desc = _pick_column(reader.fieldnames, _SHEET_COLUMNS["description"])
+    col_budget = _pick_column(reader.fieldnames, _SHEET_COLUMNS["budget"])
+    if not col_url:
+        raise RuntimeError(f"el CSV necesita una columna url/link (encabezados: {reader.fieldnames})")
+
+    tickets: list[Ticket] = []
+    for row in reader:
+        link = (row.get(col_url) or "").strip()
+        if not link:
+            continue
+        desc = (row.get(col_desc) or "").strip() if col_desc else ""
+        title = (row.get(col_title) or "").strip() if col_title else ""
+        tickets.append(
+            Ticket(
+                source=name,
+                title=title or desc[:90] or link,
+                url=link,
+                description=desc[:4000],
+                raw_budget=(row.get(col_budget) or "").strip() if col_budget else "",
+            )
+        )
+    return tickets
+
+
 FETCHERS: dict[str, Callable[..., list[Ticket]]] = {
     "rss": fetch_rss,
     "remoteok": fetch_remoteok,
     "reddit": fetch_reddit,
     "hn": fetch_hn_freelance,
+    "sheet": fetch_sheet,
+    "remotive": fetch_remotive,
 }
 
 
