@@ -114,17 +114,18 @@ Tiene asserts: verifica que al menos un fixture pase y que los killers filtren.
 CLI completo, selftest verde, 2 workflows de n8n.
 
 **Pendiente, por prioridad:**
-1. Los RSS de Upwork en `sources.yaml` están en `enabled: false` — son personales, Santiago los
-   tiene que generar desde búsquedas guardadas y pegarlos.
+1. ~~RSS de Upwork~~ — MUERTO. Upwork discontinuó RSS para job search el 20/08/2024 (confirmado
+   en su Help Center). No hay URL que pegar, ninguna búsqueda guardada genera un link que
+   funcione. El único camino que queda para Upwork es su Developer API oficial (OAuth, requiere
+   registrar app y aprobación de Upwork) — no un scraper directo, ver la regla de "Qué NO hacer"
+   más arriba sobre scraping/términos de servicio. Evaluar si vale la pena el esfuerzo de esa
+   API o si conviene sumar otras fuentes con API/RSS pública en su lugar.
 2. Las PoCs de `03_pocs_github.md` están todas en ⬜ PENDIENTE. La prioritaria es **A1**
    (`n8n-crm-whatsapp-bridge`): es la prueba que hoy le falta al párrafo 3 de cada pitch.
 3. Los umbrales de `config.yaml` (`min_score: 48`) son una apuesta inicial sin datos. Hay que
    calibrarlos con las primeras corridas reales.
-4. No hay scraping directo de Upwork/Freelancer más allá de RSS — a propósito, por términos de
-   servicio. Si se agrega algo, que sea vía API oficial.
-5. `store.py` tiene la columna `estado` (nuevo/postulado/respondido/ganado/perdido) pero nada la
-   actualiza todavía. Candidato natural: un comando `radar marcar <fingerprint> <estado>` que
-   además escriba la entrada en `memoria/04_log_proyectos.md`.
+4. ~~store.py tiene la columna estado pero nada la actualiza~~ — RESUELTO: comando
+   `radar marcar <fingerprint> <estado>` implementado, escribe en `memoria/04_log_proyectos.md`.
 
 ---
 

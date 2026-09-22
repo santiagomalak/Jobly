@@ -7,3 +7,4 @@ venv/
 santiago-data/
 env.txt
 *.env.txt
+.claude/settings.local.json

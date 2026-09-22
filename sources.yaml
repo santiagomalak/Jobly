@@ -1,20 +1,11 @@
 # Fuentes del radar. type: rss | remoteok | reddit | hn
-# Los feeds RSS de Upwork requieren que estés logueado y generes el link desde
-# una búsqueda guardada: Upwork > Find Work > guardá la búsqueda > copiá el RSS.
+# Upwork discontinuó RSS para búsquedas de trabajo el 20/08/2024 (confirmado en su
+# Help Center: "RSS deprecation"). /ab/feed/jobs/rss devuelve 404 sin importar qué
+# búsqueda guardes. No hay URL que pegar acá — el único camino ToS-compliant que
+# queda es su Developer API oficial (OAuth, requiere registrar app y aprobación).
+# Ver CLAUDE.md pendiente #1.
 sources:
-  # ---------- Upwork (pegá tus RSS de búsquedas guardadas) ----------
-  - name: upwork-n8n
-    type: rss
-    enabled: false
-    url: "PEGA_ACA_TU_RSS_DE_UPWORK_n8n"
-  - name: upwork-scraping
-    type: rss
-    enabled: false
-    url: "PEGA_ACA_TU_RSS_DE_UPWORK_scraping"
-  - name: upwork-data
-    type: rss
-    enabled: false
-    url: "PEGA_ACA_TU_RSS_DE_UPWORK_dbt_bigquery"
+  # ---------- Upwork: sin fuente automatizada por ahora, ver nota arriba ----------
 
   # ---------- Feeds abiertos (funcionan sin cuenta) ----------
   - name: remoteok
