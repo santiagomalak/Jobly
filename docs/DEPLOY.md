@@ -31,6 +31,8 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | Paso 1 |
 | `GROQ_API_KEY`, `OPENROUTER_API_KEY` | tu `.env` local |
 | `DISCORD_WEBHOOK_RADAR`, `DISCORD_WEBHOOK_PROPUESTAS`, `DISCORD_WEBHOOK_ERRORES` | tu `.env` local |
+| `JOBLY_URL` | la URL de Vercel del paso 3 (sin barra final). Hace que cada alerta de Discord traiga un link directo al ticket. Cargala después de desplegar |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` | opcionales, ver "Reddit" abajo |
 
 Después: pestaña **Actions** → workflow `radar` → **Run workflow**. Tiene que terminar en verde y
 mandar el resumen al canal `#radar`. (La primera corrida evalúa todo como nuevo: es normal.)
@@ -47,6 +49,7 @@ mandar el resumen al canal `#radar`. (La primera corrida evalúa todo como nuevo
    | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | Paso 1 |
    | `GROQ_API_KEY`, `OPENROUTER_API_KEY` | tu `.env` local |
    | `LLM_TIMEOUT` | `15` |
+   | `LLM_MAX_WAIT` | `8` (tope de espera ante límites de los proveedores gratis) |
 
 4. Deploy. Abrí la URL, entrá con la contraseña y probá: Pipeline, Agregar, Preguntar.
 5. Si la página dice "Falta configurar...", falta una variable: la app falla cerrada a propósito.
@@ -56,6 +59,18 @@ mandar el resumen al canal `#radar`. (La primera corrida evalúa todo como nuevo
 - `https://<tu-app>.vercel.app/healthz` responde `{"ok": true}` sin login.
 - Cualquier otra ruta sin sesión te manda a `/login`.
 - En Agregar, cargá una oferta de prueba: aparece en Pipeline en el celular y en la PC.
+
+## Reddit (opcional, 5 min)
+
+r/forhire, r/slavelabour y r/jobbit son de las pocas fuentes con micro-proyectos reales, pero
+Reddit bloquea el acceso anónimo (403). Con su API oficial de solo lectura funcionan:
+
+1. reddit.com/prefs/apps → "create another app" → tipo **script**, redirect uri `http://localhost:8080`.
+2. Copiá el **client id** (debajo del nombre de la app) y el **secret**.
+3. Cargalos como `REDDIT_CLIENT_ID` y `REDDIT_CLIENT_SECRET` en tu `.env` y en los secrets de GitHub.
+   `REDDIT_USER_AGENT` = `python:jobly-radar:1.0 (by /u/tu_usuario)`.
+
+Sin estas variables la fuente sigue fallando en silencio y el resto del radar funciona igual.
 
 ## Local
 

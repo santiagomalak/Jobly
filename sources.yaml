@@ -64,3 +64,30 @@ sources:
     type: remotive
     enabled: true
     url: "https://remotive.com/api/remote-jobs"
+
+  # ---------- Himalayas: API pública, gratis, con búsqueda (atribución en el pie del CRM) ----------
+  # Empty locationRestrictions = mundial; el scoring resta 30 si no incluye Argentina/LATAM.
+  - name: himalayas-contract
+    type: himalayas
+    enabled: true
+    params: {worldwide: "true", employment_type: contractor}
+    queries: [n8n, automation, dbt, bigquery, "data engineer", "analytics engineer", "web scraping", python, react, node, chatbot, "ai agent"]
+  - name: himalayas-argentina
+    type: himalayas
+    enabled: true
+    params: {country: AR}
+    queries: [data, python, automation, react, analytics, developer]
+  - name: himalayas-junior
+    type: himalayas
+    enabled: true
+    params: {worldwide: "true"}
+    queries: ["junior data analyst", "junior python", "junior developer", "analytics engineer", n8n]
+
+  # ---------- Jobicy: API pública (crédito con link a Jobicy; el botón de postular va al aviso original) ----------
+  - name: jobicy
+    type: jobicy
+    enabled: true
+    queries:
+      - {geo: latam}
+      - {geo: anywhere, tag: automation}
+      - {geo: anywhere, tag: data}

@@ -26,12 +26,13 @@ propuestas enviadas o tasa de cierre.** Refactors que no mueven ese número son 
 ## Arquitectura
 
 ```
-sources.py   → recolecta tickets: RSS / RemoteOK / Remotive / HN / Reddit / Google Sheet (CSV)
+sources.py   → recolecta: RemoteOK / Remotive / Himalayas / Jobicy / WWR / HN / Reddit (OAuth) / Google Sheet
 db.py        → SQLite local, o Turso (libSQL por HTTP) si hay TURSO_* — mismo SQL
 store.py     → dedup por fingerprint, estados del pipeline, notas, métricas del KPI
 scoring.py   → killers → módulo ganador → bonus/penalizaciones → ubicación → presupuesto → verdict
 memory.py    → carga SOLO perfil core + el módulo que ganó (no el CV completo)
-pitch.py     → arma el prompt y llama a llm.py
+pitch.py     → pitch de proyecto (plan + precio) o carta de postulación si la fuente marca `tipo:` (SYSTEM_EMPLEO vive solo acá)
+seguimiento.py → mensajes de seguimiento 1 (48 h) y 2 (6 días), política de 06_plantillas_venta.md
 ask.py       → asistente de formularios: responde con perfil + contexto personal (09_*.md)
 llm.py       → cascada Groq → OpenRouter :free → Ollama → plantilla sin IA
 notify.py    → embed + propuesta en bloque de código al webhook de Discord
@@ -137,9 +138,14 @@ CLI, CRM web con login (pipeline, detalle del ticket, asistente `ask`, carga man
 de planillas), capa Turso, 2 workflows de n8n, CI de tests. Selftests verdes.
 
 **Diagnóstico de fuentes (23/09/2026):** las fuentes públicas casi no traen micro-proyectos
-freelance; lo que hay son puestos full-time Senior y avisos de marketplaces de talento. Por eso el
-umbral se dejó en 48 (bajarlo solo trae ruido) y la vía más productiva es cargar ofertas propias
-desde el CRM ("Agregar"). Fuentes por investigar: Workana, Freelancer.com, Torre.ai, Upwork API.
+freelance; lo que hay son puestos (muchos Senior). Himalayas (búsqueda con `q`, `worldwide`,
+`employment_type`, `country=AR`) y Jobicy sumaron oferta real: hoy pasan ~4 puestos por corrida y
+~40 quedan en "Para revisar". Los puestos se puntúan con seniority/ubicación/tipo, no penalizan por
+"sin presupuesto", y se postulan con **carta** (no con plan de 1-3 días). El umbral sigue en 48.
+Descartadas: **Freelancer.com** (su API responde sin login, pero sus Términos §33 prohíben acceso
+automatizado incluida la API sin permiso escrito; solo entra si Santiago lo obtiene), Upwork
+(RSS muerto), Torre (pide auth), Dice/Indeed/Glassdoor. Por investigar: Workana (sin API pública),
+Upwork API oficial, Working Nomads (`/api/exposed_jobs/`, sin evaluar).
 
 **Pendiente, por prioridad:**
 0. Desplegar: `docs/DEPLOY.md` (Turso + Vercel + secrets). Requiere cuentas de Santiago.

@@ -22,6 +22,9 @@ _REGION_OK = re.compile(
     re.I,
 )
 
+_NIVEL_ALTO = {"senior", "manager", "director", "executive", "lead", "staff", "principal"}
+_NIVEL_BAJO = {"entry-level", "entry level", "junior", "intern"}
+
 # Un ticket de 1-3 días no vale más que esto. Por encima es un sueldo anual, no un proyecto.
 _TOPE_PROYECTO_USD = 20_000
 
@@ -71,6 +74,12 @@ def _patron(kw: str, exacta: bool) -> re.Pattern[str]:
     return re.compile(r"(?<![a-z0-9])" + base + fin)
 
 
+def es_oferta_de_empleo(ticket: Ticket) -> bool:
+    """Puesto de una bolsa de empleo (Himalayas, Remotive, Jobicy...), no un proyecto con presupuesto.
+    Lo marca la fuente con una etiqueta `tipo:`. Se postula con carta, no con plan de 1-3 días."""
+    return any(t.startswith("tipo:") for t in ticket.tags)
+
+
 def _hits(text: str, words: list[str], cap: int = 3) -> list[str]:
     found = [w for w in words if _patron(w, False).search(text)]
     return found[:cap]
@@ -117,8 +126,20 @@ def score_ticket(ticket: Ticket, taxonomy: dict[str, Any], cfg: dict[str, Any]) 
             score += int(pts)
             reasons.append(f"penaliza '{word}': {pts}")
 
-    # 3b. Elegibilidad y tipo de contrato (etiquetas que arman las fuentes estructuradas)
+    # 3b. Elegibilidad, tipo de contrato y seniority (etiquetas de las fuentes estructuradas)
+    seniority_aplicado = False
     for tag in ticket.tags:
+        if tag.startswith("seniority:") and not seniority_aplicado:
+            nivel = tag.split(":", 1)[1].strip().lower()
+            if nivel in _NIVEL_ALTO:
+                score -= 10
+                reasons.append(f"seniority {nivel}: -10")
+                seniority_aplicado = True
+            elif nivel in _NIVEL_BAJO:
+                score += 4
+                reasons.append(f"seniority {nivel}: +4")
+                seniority_aplicado = True
+            continue
         if tag.startswith("ubicacion:"):
             lugar = tag.split(":", 1)[1].strip()
             if lugar and not _REGION_OK.search(lugar):
@@ -147,7 +168,7 @@ def score_ticket(ticket: Ticket, taxonomy: dict[str, Any], cfg: dict[str, Any]) 
         else:
             score += 3
             reasons.append(f"presupuesto ${budget}: +3")
-    else:
+    elif not es_oferta_de_empleo(ticket):
         score -= 4
         reasons.append("sin presupuesto visible: -4")
 

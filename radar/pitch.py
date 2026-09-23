@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import re
 
+from . import ask as asistente
 from . import llm
 from .memory import Memory
 from .models import Ticket
+from .scoring import es_oferta_de_empleo
 
 SYSTEM = """Sos el redactor comercial de Santiago, un ingeniero de automatización y datos freelance.
 Escribís propuestas de primer contacto para proyectos freelance.
@@ -73,7 +75,70 @@ def _fallback(ticket: Ticket, mem: Memory) -> str:
     )
 
 
+SYSTEM_EMPLEO = """Sos Santiago Aragón Malak, ingeniero de datos y automatización, y escribís una carta de postulación breve para un PUESTO (relación de dependencia o contrato), no para un proyecto puntual.
+
+REGLAS INVIOLABLES:
+1. Exactamente 3 párrafos, 100 a 150 palabras en total. Sin saludo ni despedida.
+2. Párrafo 1 = ENCAJE: qué pide el puesto y por qué tu experiencia real responde a eso. Concreto, sin adjetivos vacíos ("apasionado", "dinámico").
+3. Párrafo 2 = PRUEBA: UNA experiencia o proyecto de la sección PROYECTOS REALES, con sus datos exactos. Si ninguno se parece de verdad al puesto, describí una capacidad concreta del CONTEXTO sin atribuirla a un empleo.
+4. Párrafo 3 = DISPONIBILIDAD + cierre con UNA pregunta específica sobre el rol o el equipo.
+5. Usá SOLO hechos del CONTEXTO. Nunca inventes empleos, cifras, títulos ni niveles; los niveles se copian textuales del CV y, ante dudas, el más bajo. Lo que falte se escribe [COMPLETAR: dato].
+6. Idioma: el del aviso.
+7. PROHIBIDO: precios, tarifas, plazos de entrega en días, saludos genéricos, "hope this finds you well", emojis, decir que sos estudiante, disculparte.
+8. Devolvés ÚNICAMENTE el texto, sin encabezados ni comillas.
+"""
+
+USER_TEMPLATE_EMPLEO = """### PUESTO
+Título: {title}
+Fuente: {source}
+Datos: {datos}
+Descripción:
+{description}
+
+### CONTEXTO (mis datos reales)
+{context}
+
+### INSTRUCCIÓN
+Escribí la carta de postulación de 3 párrafos para este puesto.
+"""
+
+
+def _proyecto_real(ticket: Ticket, mem: Memory) -> str:
+    m = re.search(r"\*\*(.+?)\*\*", mem.proyectos_reales(ticket.module or ""))
+    return m.group(1).strip() if m else ""
+
+
+def _fallback_empleo(ticket: Ticket, mem: Memory) -> str:
+    """Carta sin IA: honesta y corta. Hay que completarla a mano."""
+    proyecto = _proyecto_real(ticket, mem)
+    kws = ", ".join(ticket.matched_keywords[:4])
+    return (
+        "[BORRADOR SIN IA — completá y revisá antes de enviar]\n\n"
+        f"Me postulo a «{ticket.title[:80]}». Mi trabajo se centra en datos y automatización"
+        f"{' (' + kws + ')' if kws else ''}, y lo que pide el puesto se cruza con lo que hago hoy.\n\n"
+        f"{'Como prueba concreta: ' + proyecto + '.' if proyecto else '[COMPLETAR: la experiencia más parecida al puesto]'}\n\n"
+        "Trabajo 100% remoto desde Argentina (UTC-3). ¿Cuál es el proceso de selección y con qué "
+        "stack trabaja hoy el equipo?"
+    )
+
+
+def _build_pitch_empleo(ticket: Ticket, mem: Memory) -> Ticket:
+    datos = "; ".join(t.split(":", 1)[1] for t in ticket.tags if t.split(":", 1)[0] in ("tipo", "ubicacion", "seniority", "salario"))
+    user = USER_TEMPLATE_EMPLEO.format(
+        title=ticket.title,
+        source=ticket.source,
+        datos=datos or "sin datos",
+        description=(ticket.description or "(sin descripción)")[:2500],
+        context=asistente.contexto_asistente(mem, ticket.text)[:12000],
+    )
+    result = llm.generate(SYSTEM_EMPLEO, user, fallback=_fallback_empleo(ticket, mem))
+    ticket.pitch, ticket.pitch_engine = result.text, result.engine
+    return ticket
+
+
 def build_pitch(ticket: Ticket, mem: Memory) -> Ticket:
+    if es_oferta_de_empleo(ticket):  # un puesto se postula con carta, no con plan de 1-3 días
+        return _build_pitch_empleo(ticket, mem)
     context = mem.contexto_pitch(ticket.module)
     user = USER_TEMPLATE.format(
         title=ticket.title,

@@ -38,6 +38,7 @@
   {% for e, etiqueta in [('nuevo','Pendientes'),('postulado','Postulados'),('respondido','Respondidos'),('ganado','Ganados'),('perdido','Perdidos')] %}
     <button class="btn" data-tab="{{ e }}">{{ etiqueta }} <span class="badge">{{ pipeline[e]|length }}</span></button>
   {% endfor %}
+  <button class="btn" data-tab="seguimiento">Seguimiento <span class="badge {% if seguimientos %}w{% endif %}">{{ seguimientos|length }}</span></button>
   <button class="btn" data-tab="revisar">Para revisar <span class="badge">{{ revisar|length }}</span></button>
 </div>
 
@@ -52,6 +53,20 @@
   {% endfor %}
 </section>
 {% endfor %}
+
+<section data-panel="seguimiento" hidden>
+  <p class="sub">Postulaciones sin respuesta: seguimiento 1 a las 48 h, seguimiento 2 a los 6 días. Máximo 2; después, silencio.</p>
+  {% for t, numero, atraso in seguimientos %}
+  <a class="card" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px">
+    <div style="font-weight:650;font-size:15px">{{ t['title'][:110] }}</div>
+    <div class="row" style="margin-top:7px">
+      <span class="badge w">seguimiento {{ numero }}</span>
+      <span class="badge">{% if atraso < 1 %}vence hoy{% else %}vencido hace {{ atraso|int }} d{% endif %}</span>
+      <span class="badge">{{ t['source'] }}</span>
+    </div>
+  </a>
+  {% else %}<div class="empty">No hay seguimientos pendientes.</div>{% endfor %}
+</section>
 
 <section data-panel="revisar" hidden>
   <p class="sub">Quedaron cerca del umbral pero sin killers ni problemas de presupuesto. Vale una mirada rápida.</p>

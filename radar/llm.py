@@ -114,20 +114,28 @@ PROVIDERS = [("groq", _groq), ("openrouter", _openrouter), ("ollama", _ollama)]
 
 
 def _call(name: str, fn, system: str, user: str) -> str | None:
-    """Una llamada; ante 429 espera lo que pide el proveedor (tope 8 s) y reintenta una vez."""
-    try:
-        return fn(system, user)
-    except requests.HTTPError as exc:
-        resp = exc.response
-        if resp is None or resp.status_code != 429:
-            raise
+    """Una llamada; ante 429 espera lo que pide el proveedor (cada vez más) y reintenta.
+    Hasta 3 intentos y como máximo LLM_MAX_WAIT segundos de espera en total (en Vercel: 8)."""
+    gastado = 0.0
+    tope = float(os.environ.get("LLM_MAX_WAIT", "20"))
+    for intento in range(3):
         try:
-            espera = min(float(resp.headers.get("retry-after", 3)), 8.0)
-        except ValueError:
-            espera = 3.0
-        log.warning("%s pidió calma (429), reintento en %.0f s", name, espera)
-        time.sleep(espera)
-        return fn(system, user)
+            return fn(system, user)
+        except requests.HTTPError as exc:
+            resp = exc.response
+            if resp is None or resp.status_code != 429 or intento == 2:
+                raise
+            try:
+                pedido = float(resp.headers.get("retry-after", 3))
+            except ValueError:
+                pedido = 3.0
+            espera = min(pedido * (intento + 1) + 1, tope - gastado)
+            if espera <= 0:
+                raise
+            log.warning("%s pidió calma (429), reintento en %.0f s", name, espera)
+            time.sleep(espera)
+            gastado += espera
+    return None
 
 
 def generate(system: str, user: str, fallback: str, min_len: int = 80) -> LLMResult:

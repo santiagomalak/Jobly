@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import requests
@@ -66,17 +67,22 @@ def send_ticket(webhook: str, ticket: Ticket) -> bool:
         ],
         "footer": {"text": f"radar-freelance · {ticket.fingerprint[:8]}"},
     }
-    payload = {"username": "Radar", "embeds": [embed]}
+    # El texto del aviso viene de terceros: nunca debe poder mencionar @everyone ni roles.
+    sin_menciones = {"parse": []}
+    payload = {"username": "Radar", "embeds": [embed], "allowed_mentions": sin_menciones}
     ok = post(webhook, payload)
     if not ok:
         return False
 
     # La propuesta va en un mensaje aparte, en bloque de código: se copia de un toque.
+    crm = os.environ.get("JOBLY_URL", "").strip().rstrip("/")
+    enlace_crm = f"\n📲 Abrir en Jobly: {crm}/ticket/{ticket.fingerprint}" if crm else ""
     pitch_msg = {
         "username": "Radar",
         "content": f"**PROPUESTA LISTA** · {_trim(ticket.title, 80)}\n"
-        f"```\n{_trim(ticket.pitch, 1700)}\n```\n"
-        f"🔗 {ticket.url}",
+        f"```\n{_trim(ticket.pitch, 1600)}\n```\n"
+        f"🔗 {ticket.url}{enlace_crm}",
+        "allowed_mentions": sin_menciones,
     }
     return post(webhook, pitch_msg)
 

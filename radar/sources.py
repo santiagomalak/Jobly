@@ -9,7 +9,9 @@ import csv
 import html
 import io
 import logging
+import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -83,7 +85,7 @@ def fetch_remoteok(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
         # salary_min/max es sueldo anual full-time, no presupuesto de proyecto.
         # No va en raw_budget: scoring.extract_budget lo leería como plata de un
         # ticket freelance y le daría bonus a ofertas de empleo full-time.
-        tags = [str(t) for t in job.get("tags", [])]
+        tags = [str(t) for t in job.get("tags", [])] + ["tipo:empleo"]  # bolsa de empleo: se postula con carta
         if job.get("salary_min"):
             tags.append(f"salario_full_time:USD {job.get('salary_min')}-{job.get('salary_max')}")
         tickets.append(
@@ -140,14 +142,178 @@ def fetch_remotive(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
 
 
 # --------------------------------------------------------------------------
+# Himalayas (API pública, gratis y sin auth). Condiciones: link de atribución
+# (el CRM lo muestra en el pie) y sin polling excesivo (429 si te pasás).
+# Filtros útiles: q, worldwide=true, employment_type=contractor, country=AR.
+# --------------------------------------------------------------------------
+_TIPO = {
+    "contractor": "contract", "contract": "contract", "freelance": "freelance",
+    "full time": "full_time", "full-time": "full_time", "part time": "part_time", "part-time": "part_time",
+}
+
+
+def _tag_tipo(valor: str) -> str | None:
+    t = _TIPO.get(str(valor).strip().lower())
+    return f"tipo:{t}" if t else None
+
+
+def _epoch_iso(valor: Any) -> str:
+    try:
+        return datetime.fromtimestamp(int(valor), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def _himalayas_ticket(name: str, job: dict[str, Any]) -> Ticket:
+    tags = [t for t in [_tag_tipo(job.get("employmentType", ""))] if t]
+    restricciones = job.get("locationRestrictions") or []
+    tags.append("ubicacion:" + (", ".join(restricciones) if restricciones else "Worldwide"))  # vacío = mundial
+    tags += [f"seniority:{s}" for s in job.get("seniority") or []]
+    if job.get("minSalary"):
+        tags.append(f"salario:{job['minSalary']}-{job.get('maxSalary')} {job.get('currency', '')} {job.get('salaryPeriod', '')}")
+    return Ticket(
+        source=name,
+        title=_clean(job.get("title", "")),
+        url=job.get("applicationLink") or job.get("guid", ""),
+        description=_clean(job.get("description") or job.get("excerpt", ""))[:4000],
+        published=_epoch_iso(job.get("pubDate")),
+        tags=tags,
+    )
+
+
+def fetch_himalayas(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    """Una consulta por cada `queries` de la fuente (sources.yaml), con `params` comunes."""
+    src = cfg.get("_src", {})
+    base = {k: str(v) for k, v in (src.get("params") or {}).items()}
+    max_dias = int(src.get("max_age_days", 45))
+    limite = datetime.now(timezone.utc) - timedelta(days=max_dias)
+    queries = src.get("queries") or [""]
+    vistos: dict[str, Ticket] = {}
+    fallos = 0
+    for q in queries:
+        params = dict(base, **({"q": q} if q else {}))
+        try:
+            r = requests.get(
+                url or "https://himalayas.app/jobs/api/search",
+                params=params,
+                headers={"User-Agent": cfg.get("user_agent")},
+                timeout=int(cfg.get("http_timeout", 20)),
+            )
+            if r.status_code == 429:
+                log.warning("%s: 429 (límite de Himalayas), corto acá", name)
+                break
+            r.raise_for_status()
+            jobs = r.json().get("jobs", [])
+        except (requests.RequestException, ValueError) as exc:
+            fallos += 1
+            log.warning("%s: consulta %r falló: %s", name, q, exc)
+            continue
+        for job in jobs:
+            clave = job.get("guid") or job.get("applicationLink")
+            try:
+                viejo = datetime.fromtimestamp(int(job.get("pubDate")), tz=timezone.utc) < limite
+            except (TypeError, ValueError, OSError):
+                viejo = False
+            if clave and clave not in vistos and not viejo:
+                vistos[clave] = _himalayas_ticket(name, job)
+        time.sleep(0.3)
+    if fallos == len(queries):
+        raise RuntimeError("todas las consultas a Himalayas fallaron")
+    return list(vistos.values())
+
+
+# --------------------------------------------------------------------------
+# Jobicy (API pública). Condición: crédito con link a Jobicy y que el botón de
+# postular lleve a la URL original del aviso (el CRM lo hace: ticket.url).
+# --------------------------------------------------------------------------
+def fetch_jobicy(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    src = cfg.get("_src", {})
+    base = {k: str(v) for k, v in (src.get("params") or {}).items()}
+    vistos: dict[str, Ticket] = {}
+    consultas = src.get("queries") or [{}]
+    fallos = 0
+    for extra in consultas:
+        params = dict(base, count="50", **{k: str(v) for k, v in dict(extra).items()})
+        try:
+            r = requests.get(
+                url or "https://jobicy.com/api/v2/remote-jobs",
+                params=params,
+                headers={"User-Agent": cfg.get("user_agent")},
+                timeout=int(cfg.get("http_timeout", 20)),
+            )
+            r.raise_for_status()
+            jobs = r.json().get("jobs", [])
+        except (requests.RequestException, ValueError) as exc:
+            fallos += 1
+            log.warning("%s: consulta %r falló: %s", name, extra, exc)
+            continue
+        for job in jobs:
+            tipos = job.get("jobType") if isinstance(job.get("jobType"), list) else [job.get("jobType")]
+            tags = [t for t in (_tag_tipo(x) for x in tipos if x) if t]
+            geo = re.sub(r"\s+", " ", str(job.get("jobGeo") or "")).strip()
+            if geo:
+                tags.append(f"ubicacion:{geo}")
+            if job.get("jobLevel"):
+                tags.append(f"seniority:{job['jobLevel']}")
+            if job.get("salaryMin"):
+                tags.append(f"salario:{job['salaryMin']}-{job.get('salaryMax')} {job.get('salaryCurrency', '')} {job.get('salaryPeriod', '')}")
+            clave = job.get("url") or str(job.get("id"))
+            if clave and clave not in vistos:
+                vistos[clave] = Ticket(
+                    source=name,
+                    title=_clean(job.get("jobTitle", "")),
+                    url=job.get("url", ""),
+                    description=_clean(job.get("jobDescription") or job.get("jobExcerpt", ""))[:4000],
+                    published=job.get("pubDate", ""),
+                    tags=tags,
+                )
+        time.sleep(0.3)
+    if fallos == len(consultas):
+        raise RuntimeError("todas las consultas a Jobicy fallaron")
+    return list(vistos.values())
+
+
+# --------------------------------------------------------------------------
 # Reddit (JSON público, sin credenciales)
 # --------------------------------------------------------------------------
-def fetch_reddit(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
-    r = requests.get(
-        url,
-        headers={"User-Agent": cfg.get("user_agent")},
-        timeout=int(cfg.get("http_timeout", 20)),
+_reddit_token: dict[str, Any] = {"valor": "", "expira": 0.0}
+
+
+def _token_reddit(user_agent: str, timeout: int) -> str:
+    """Token de solo lectura (OAuth "script app", client_credentials). Vacío si no hay credenciales."""
+    cid, secreto = os.environ.get("REDDIT_CLIENT_ID", "").strip(), os.environ.get("REDDIT_CLIENT_SECRET", "").strip()
+    if not (cid and secreto):
+        return ""
+    if _reddit_token["valor"] and time.time() < _reddit_token["expira"] - 60:
+        return _reddit_token["valor"]
+    r = requests.post(
+        "https://www.reddit.com/api/v1/access_token",
+        auth=(cid, secreto),
+        data={"grant_type": "client_credentials"},
+        headers={"User-Agent": user_agent},
+        timeout=timeout,
     )
+    r.raise_for_status()
+    datos = r.json()
+    if "access_token" not in datos:
+        raise RuntimeError(f"Reddit no devolvió token: {datos.get('error', datos)}")
+    _reddit_token.update(valor=datos["access_token"], expira=time.time() + int(datos.get("expires_in", 3600)))
+    return _reddit_token["valor"]
+
+
+def fetch_reddit(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    """Con REDDIT_CLIENT_ID/SECRET usa la API oficial (OAuth). Sin ellas prueba el JSON público,
+    que Reddit suele bloquear con 403: en ese caso la fuente falla sola sin tumbar la corrida."""
+    ua = os.environ.get("REDDIT_USER_AGENT") or cfg.get("user_agent")
+    timeout = int(cfg.get("http_timeout", 20))
+    token = _token_reddit(ua, timeout)
+    headers = {"User-Agent": ua}
+    destino = url
+    if token:
+        headers["Authorization"] = f"bearer {token}"
+        destino = url.replace("https://www.reddit.com", "https://oauth.reddit.com").replace(".json", "")
+        destino += ("&" if "?" in destino else "?") + "raw_json=1"
+    r = requests.get(destino, headers=headers, timeout=timeout)
     r.raise_for_status()
     children = r.json().get("data", {}).get("children", [])
     cutoff = datetime.now(timezone.utc) - timedelta(hours=int(cfg.get("lookback_hours", 36)))
@@ -289,6 +455,8 @@ FETCHERS: dict[str, Callable[..., list[Ticket]]] = {
     "hn": fetch_hn_freelance,
     "sheet": fetch_sheet,
     "remotive": fetch_remotive,
+    "himalayas": fetch_himalayas,
+    "jobicy": fetch_jobicy,
 }
 
 
@@ -305,7 +473,7 @@ def collect(sources: list[dict[str, Any]], cfg: dict[str, Any]) -> tuple[list[Ti
             errors.append(f"{src.get('name')}: tipo desconocido '{kind}'")
             continue
         try:
-            found = fetcher(src["name"], src.get("url", ""), cfg)
+            found = fetcher(src["name"], src.get("url", ""), {**cfg, "_src": src})
             log.info("%s: %d tickets", src["name"], len(found))
             all_tickets.extend(found)
         except Exception as exc:  # noqa: BLE001 - una fuente caída no frena el radar

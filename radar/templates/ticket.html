@@ -11,6 +11,7 @@
   {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }} detectado</span>{% else %}<span class="badge">sin presupuesto visible</span>{% endif %}
   {% if d.get('published') %}<span class="badge">publicado {{ d['published'][:10] }}</span>{% endif %}
   {% if t['verdict'] != 'pass' %}<span class="badge w">no pasó el filtro</span>{% endif %}
+  {% for etiqueta, valor in datos_oferta %}<span class="badge">{{ etiqueta }}: {{ valor }}</span>{% endfor %}
 </div>
 
 <div class="row" style="margin-bottom:6px">
@@ -32,6 +33,18 @@
     <span class="sub" style="margin:0">Editalo antes de copiar: es un borrador, el envío lo decidís vos.</span>
   </div>
 </div>
+
+{% if seguimiento_debido %}
+<h2>Seguimiento {{ seguimiento_debido }} vencido</h2>
+<div class="card">
+  <textarea id="seg" rows="4" placeholder="Tocá Generar para redactarlo según tu política de seguimiento"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="btn primary" id="seg-gen">Generar</button>
+    <button class="btn" id="seg-copiar">Copiar</button>
+    <button class="btn" id="seg-hecho">Ya lo mandé</button>
+  </div>
+</div>
+{% endif %}
 
 <h2>La oferta completa</h2>
 <div class="card" style="white-space:pre-wrap;word-break:break-word">{{ d.get('description') or '(sin descripción)' }}</div>
@@ -71,6 +84,21 @@
     } catch (e) { toast(e.message); btn.textContent = antes; }
     btn.disabled = false;
   };
+
+  const segGen = document.getElementById('seg-gen');
+  if (segGen) {
+    segGen.onclick = async () => {
+      segGen.disabled = true; segGen.textContent = 'Generando…';
+      try { const r = await api('/api/seguimiento', {fingerprint: FP}); document.getElementById('seg').value = r.text; }
+      catch (e) { toast(e.message); }
+      segGen.disabled = false; segGen.textContent = 'Generar';
+    };
+    document.getElementById('seg-copiar').onclick = () => copiar(document.getElementById('seg').value);
+    document.getElementById('seg-hecho').onclick = async () => {
+      try { await api('/api/seguimiento_hecho', {fingerprint: FP}); toast('Seguimiento registrado'); setTimeout(() => location.reload(), 900); }
+      catch (e) { toast(e.message); }
+    };
+  }
 
   document.getElementById('guardar-notas').onclick = async () => {
     try { await api('/api/notas', {fingerprint: FP, notas: document.getElementById('notas').value}); toast('Notas guardadas'); }

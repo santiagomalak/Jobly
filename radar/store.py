@@ -29,14 +29,23 @@ CREATE TABLE IF NOT EXISTS tickets (
     estado      TEXT DEFAULT 'nuevo',
     notas       TEXT DEFAULT '',
     estado_at   TEXT,
-    postulado_at TEXT
+    postulado_at TEXT,
+    seguimientos INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_seen ON tickets(seen_at);
 CREATE INDEX IF NOT EXISTS idx_estado ON tickets(estado);
 """
 
 # Columnas agregadas después de la primera versión: se migran bases existentes.
-_COLUMNAS_NUEVAS = {"notas": "TEXT DEFAULT ''", "estado_at": "TEXT", "postulado_at": "TEXT"}
+_COLUMNAS_NUEVAS = {
+    "notas": "TEXT DEFAULT ''",
+    "estado_at": "TEXT",
+    "postulado_at": "TEXT",
+    "seguimientos": "INTEGER DEFAULT 0",
+}
+
+# Política de memoria/06_plantillas_venta.md: seguimiento 1 a las 48 h, 2 a los 6 días. Máximo 2.
+_DIAS_SEGUIMIENTO = {0: 2, 1: 6}
 
 _UPSERT = """INSERT INTO tickets
    (fingerprint, source, title, url, module, score, budget_usd,
@@ -115,6 +124,32 @@ class Store:
     def set_notas(self, fingerprint: str, notas: str) -> None:
         self.conn.execute("UPDATE tickets SET notas = ? WHERE fingerprint = ?", (notas[:4000], fingerprint))
         self.conn.commit()
+
+    def registrar_seguimiento(self, fingerprint: str) -> int:
+        """Anota que enviaste un seguimiento. Devuelve cuántos van (tope 2)."""
+        self.conn.execute(
+            "UPDATE tickets SET seguimientos = MIN(COALESCE(seguimientos, 0) + 1, 2) WHERE fingerprint = ?",
+            (fingerprint,),
+        )
+        self.conn.commit()
+        row = self.get(fingerprint)
+        return int(row["seguimientos"] or 0) if row else 0
+
+    def seguimientos_pendientes(self) -> list[tuple[Any, int, float]]:
+        """Postulados sin respuesta cuyo próximo seguimiento ya venció: [(fila, número, días de atraso)]."""
+        ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = self.conn.execute(
+            "SELECT * FROM tickets WHERE estado = 'postulado' AND postulado_at IS NOT NULL"
+        ).fetchall()
+        out = []
+        for r in rows:
+            hechos = int(r["seguimientos"] or 0)
+            desde = _parse_ts(r["postulado_at"])
+            if hechos in _DIAS_SEGUIMIENTO and desde:
+                atraso = (ahora - desde).total_seconds() / 86400 - _DIAS_SEGUIMIENTO[hechos]
+                if atraso >= 0:
+                    out.append((r, hechos + 1, atraso))
+        return sorted(out, key=lambda x: -x[2])
 
     def set_pitch(self, fingerprint: str, pitch: str, engine: str) -> None:
         self.conn.execute(

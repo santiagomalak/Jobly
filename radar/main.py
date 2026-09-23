@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
@@ -82,6 +83,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     guardar: list[tuple[Ticket, bool]] = [(t, False) for t in descartados]
     for t in aprobados:
         build_pitch(t, mem)
+        if t.pitch_engine != "plantilla":  # los proveedores gratis limitan tokens por minuto
+            time.sleep(float(cfg.get("pitch_pause_s", 4)))
         if args.dry:
             print("\n" + "=" * 72)
             print(f"[{t.score}] {t.module} · {t.title}")

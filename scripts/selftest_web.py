@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -64,6 +65,70 @@ def test_turso_adapter() -> None:
             check("boom" in str(exc), "propaga el mensaje de error de Turso")
 
 
+def test_fuentes() -> None:
+    print("Fuentes (HTTP mockeado)")
+    from radar import sources
+
+    def resp(data, status=200):
+        m = MagicMock()
+        m.status_code = status
+        m.json.return_value = data
+        m.raise_for_status = lambda: None
+        return m
+
+    ahora = 1790185103
+    hima = {"jobs": [
+        {"title": "n8n Developer", "guid": "g1", "applicationLink": "https://himalayas.app/j/1", "pubDate": ahora,
+         "employmentType": "Contractor", "locationRestrictions": [], "seniority": ["Mid-level"],
+         "description": "<p>Build workflows</p>", "minSalary": None},
+        {"title": "Data Engineer", "guid": "g2", "applicationLink": "https://himalayas.app/j/2", "pubDate": ahora,
+         "employmentType": "Full Time", "locationRestrictions": ["Argentina"], "seniority": ["Senior", "Manager"],
+         "description": "x", "minSalary": 90000, "maxSalary": 120000, "currency": "USD", "salaryPeriod": "annual"},
+        {"title": "Viejo", "guid": "g3", "applicationLink": "https://himalayas.app/j/3", "pubDate": 1000,
+         "employmentType": "Full Time", "locationRestrictions": [], "seniority": [], "description": "x"},
+    ]}
+    cfg = {"http_timeout": 5, "user_agent": "t", "_src": {"queries": ["n8n", "data"], "params": {"worldwide": "true"}}}
+    with patch("radar.sources.requests.get", return_value=resp(hima)) as g, patch("radar.sources.time.sleep"):
+        tks = sources.fetch_himalayas("himalayas-x", "", cfg)
+        params = g.call_args_list[0].kwargs["params"]
+    check(len(tks) == 2, "Himalayas: deduplica entre consultas y descarta avisos viejos")
+    check(params == {"worldwide": "true", "q": "n8n"}, "Himalayas: manda params comunes + q")
+    a = next(t for t in tks if t.title == "n8n Developer")
+    check("tipo:contract" in a.tags and "ubicacion:Worldwide" in a.tags, "Himalayas: contractor y ubicación vacía = mundial")
+    b = next(t for t in tks if t.title == "Data Engineer")
+    check("ubicacion:Argentina" in b.tags and "seniority:Senior" in b.tags, "Himalayas: ubicación y seniority como etiquetas")
+    check(any(t.startswith("salario:") for t in b.tags) and b.raw_budget == "", "Himalayas: el sueldo va a etiquetas, no a presupuesto")
+
+    with patch("radar.sources.requests.get", return_value=resp({}, status=429)), patch("radar.sources.time.sleep"):
+        check(sources.fetch_himalayas("h", "", cfg) == [], "Himalayas: ante 429 corta sin romper")
+
+    post_reddit = {"data": {"children": [{"data": {
+        "title": "[HIRING] n8n automation", "permalink": "/r/forhire/comments/x/", "selftext": "budget $300",
+        "created_utc": time.time() - 60, "link_flair_text": "Hiring"}}]}}
+    url_r = "https://www.reddit.com/r/forhire/new.json?limit=100"
+    cfg_r = {"http_timeout": 5, "user_agent": "ua"}
+    sources._reddit_token.update(valor="", expira=0.0)
+    with patch.dict(os.environ, {"REDDIT_CLIENT_ID": "id", "REDDIT_CLIENT_SECRET": "sec"}), \
+         patch("radar.sources.requests.post", return_value=resp({"access_token": "tok", "expires_in": 86400})) as pt, \
+         patch("radar.sources.requests.get", return_value=resp(post_reddit)) as gt:
+        rt = sources.fetch_reddit("reddit-forhire", url_r, cfg_r)
+        destino, hdrs = gt.call_args.args[0], gt.call_args.kwargs["headers"]
+    check(pt.call_args.kwargs["auth"] == ("id", "sec"), "Reddit: pide token OAuth con las credenciales de la app")
+    check(destino.startswith("https://oauth.reddit.com/r/forhire/new?") and hdrs["Authorization"] == "bearer tok", "Reddit: con token usa oauth.reddit.com")
+    check(len(rt) == 1 and rt[0].title.startswith("[HIRING]"), "Reddit: devuelve los [HIRING]")
+    sources._reddit_token.update(valor="", expira=0.0)
+    with patch.dict(os.environ, {"REDDIT_CLIENT_ID": "", "REDDIT_CLIENT_SECRET": ""}), \
+         patch("radar.sources.requests.get", return_value=resp(post_reddit)) as gt:
+        sources.fetch_reddit("reddit-forhire", url_r, cfg_r)
+        check(gt.call_args.args[0] == url_r and "Authorization" not in gt.call_args.kwargs["headers"], "Reddit: sin credenciales prueba el JSON público")
+
+    jobi = {"jobs": [{"id": 1, "jobTitle": "Ops", "url": "https://jobicy.com/j/1", "jobType": ["Contract"],
+                      "jobGeo": "Anywhere", "jobLevel": "Junior", "jobDescription": "<b>desc</b>", "pubDate": "2026-09-20"}]}
+    with patch("radar.sources.requests.get", return_value=resp(jobi)), patch("radar.sources.time.sleep"):
+        j = sources.fetch_jobicy("jobicy", "", {"http_timeout": 5, "user_agent": "t", "_src": {"queries": [{"geo": "latam"}]}})
+    check(j[0].tags[:3] == ["tipo:contract", "ubicacion:Anywhere", "seniority:Junior"], "Jobicy: etiquetas de tipo, ubicación y nivel")
+
+
 def test_store(path: Path) -> None:
     print("Store")
     s = Store(path)
@@ -84,7 +149,42 @@ def test_store(path: Path) -> None:
         check(False, "un estado inválido debe fallar")
     except ValueError:
         check(True, "rechaza estados inválidos")
+
+    def hace(dias: int) -> None:
+        s.conn.execute("UPDATE tickets SET postulado_at = datetime('now', ?) WHERE fingerprint = ?",
+                       (f"-{dias} days", t.fingerprint))
+        s.conn.commit()
+
+    check(s.seguimientos_pendientes() == [], "recién postulado: no hay seguimiento")
+    hace(3)
+    due = s.seguimientos_pendientes()
+    check(len(due) == 1 and due[0][1] == 1, "a las 48 h vence el seguimiento 1")
+    s.registrar_seguimiento(t.fingerprint)
+    check(s.seguimientos_pendientes() == [], "tras el 1º, el 2º recién vence a los 6 días")
+    hace(7)
+    check(s.seguimientos_pendientes()[0][1] == 2, "a los 6 días vence el seguimiento 2")
+    s.registrar_seguimiento(t.fingerprint)
+    check(s.registrar_seguimiento(t.fingerprint) == 2 and s.seguimientos_pendientes() == [], "máximo 2 seguimientos")
+    s.marcar(t.fingerprint, "respondido")
+    hace(30)
+    check(s.seguimientos_pendientes() == [], "si respondieron, no se persigue")
     s.close()
+
+
+def test_notify() -> None:
+    print("Discord")
+    from radar import notify
+
+    enviados: list[dict] = []
+    t = Ticket(source="x", title="@everyone n8n", url="https://e.com/9", description="@everyone mirá", pitch="carta")
+    os.environ["JOBLY_URL"] = "https://jobly.example.app/"
+    try:
+        with patch("radar.notify.post", side_effect=lambda w, p: enviados.append(p) or True):
+            notify.send_ticket("hook", t)
+    finally:
+        os.environ.pop("JOBLY_URL", None)
+    check(all(p["allowed_mentions"] == {"parse": []} for p in enviados), "un aviso de terceros no puede mencionar @everyone")
+    check(f"https://jobly.example.app/ticket/{t.fingerprint}" in enviados[1]["content"], "la alerta trae el link directo al CRM")
 
 
 def test_web(path: Path) -> None:
@@ -138,6 +238,18 @@ def test_web(path: Path) -> None:
         r = c.post("/api/pitch", json={"fingerprint": fp})
         check(r.status_code == 200 and r.json["engine"] == "test", "regenerar pitch")
 
+        s2 = Store(path)
+        s2.conn.execute("UPDATE tickets SET postulado_at = datetime('now', '-3 days') WHERE fingerprint = ?", (fp,))
+        s2.conn.commit()
+        s2.close()
+        check(b"Seguimiento 1 vencido" in c.get(f"/ticket/{fp}").data, "el detalle avisa el seguimiento vencido")
+        check(b"seguimiento 1" in c.get("/").data, "el pipeline lista el seguimiento pendiente")
+        r = c.post("/api/seguimiento", json={"fingerprint": fp})
+        check(r.status_code == 200 and r.json["numero"] == 1, "genera el seguimiento 1")
+        c.post("/api/seguimiento_hecho", json={"fingerprint": fp})
+        c.post("/api/seguimiento_hecho", json={"fingerprint": fp})
+        check(c.post("/api/seguimiento", json={"fingerprint": fp}).status_code == 400, "no hay tercer seguimiento")
+
         r = c.post("/api/ask", json={"pregunta": "¿Qué frameworks usás?", "max_chars": 300})
         check(r.status_code == 200 and r.json["text"], "el asistente responde")
         check(c.post("/api/ask", json={"pregunta": "  "}).status_code == 400, "pregunta vacía rechazada")
@@ -148,8 +260,10 @@ def test_web(path: Path) -> None:
     check(r.status_code == 200 and r.json["nuevos"] == 1, "importa filas pegadas (TSV) y descarta URLs inválidas")
     check(c.post("/api/importar", json={"csv": "titulo,descripcion\na,b"}).status_code == 400, "CSV sin columna url rechazado")
 
-    Store(path).save(Ticket(source="x", title="Malicioso", url="javascript:alert(1)", description="d",
-                            module="WEB", score=60, verdict="pass"))
+    s = Store(path)
+    s.save(Ticket(source="x", title="Malicioso", url="javascript:alert(1)", description="d",
+                  module="WEB", score=60, verdict="pass"))
+    s.close()
     html = c.get("/").data.decode()
     check('href="javascript:' not in html, "una URL javascript: nunca llega a un href")
 
@@ -171,6 +285,8 @@ def test_web(path: Path) -> None:
 
 def main() -> int:
     test_turso_adapter()
+    test_fuentes()
+    test_notify()
     with tempfile.TemporaryDirectory() as tmp:
         test_store(Path(tmp) / "a.sqlite")
         test_web(Path(tmp) / "b.sqlite")

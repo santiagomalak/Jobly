@@ -109,6 +109,34 @@ def checks_motor(cfg: dict, tax: dict) -> None:
     senior = score_ticket(_ticket(base + " 8+ years of experience."), tax, cfg)
     assert senior.score < junior.score, "pedir 8+ años debe penalizar"
 
+    # Bolsas de empleo (etiqueta tipo:): no restan por "sin presupuesto"; el seniority ajusta
+    sinpres = "n8n workflow automation webhook integration crm." + largo
+    libre = score_ticket(_ticket(sinpres), tax, cfg)
+    puesto = score_ticket(_ticket(sinpres, tags=["tipo:full_time"]), tax, cfg)
+    assert any("sin presupuesto" in r for r in libre.reasons), "un ticket libre sin presupuesto resta 4"
+    assert not any("sin presupuesto" in r for r in puesto.reasons), "un puesto no tiene presupuesto de proyecto"
+    junior = score_ticket(_ticket(sinpres, tags=["tipo:full_time", "seniority:Entry-level"]), tax, cfg)
+    senior = score_ticket(_ticket(sinpres, tags=["tipo:full_time", "seniority:Senior", "seniority:Manager"]), tax, cfg)
+    assert junior.score - senior.score == 14, "Entry-level suma 4 y Senior resta 10 (una sola vez)"
+
+    # Un puesto se postula con carta (sin precios ni plazos de 1-3 días); un proyecto, con el pitch de siempre
+    from unittest.mock import patch
+
+    from radar import llm, pitch
+
+    vistos: list[str] = []
+
+    def falso(system, user, fallback, min_len=80):
+        vistos.append(system)
+        return llm.LLMResult("texto", "test")
+
+    with patch("radar.llm.generate", side_effect=falso):
+        build_pitch(puesto, Memory(Path(cfg["root"]) / cfg["memory_dir"]))
+        build_pitch(libre, Memory(Path(cfg["root"]) / cfg["memory_dir"]))
+    assert "PUESTO" in vistos[0] and "PUESTO" not in vistos[1], "el modo carta solo aplica a bolsas de empleo"
+    carta = pitch._fallback_empleo(puesto, Memory(Path(cfg["root"]) / cfg["memory_dir"]))
+    assert "USD" not in carta and "días" not in carta.lower().split("plazo")[0], "la carta no cotiza"
+
     # Contexto del pitch: nada de PoCs pendientes ni proyectos de otro módulo
     mem = Memory(Path(cfg["root"]) / cfg["memory_dir"])
     ctx_auto = mem.contexto_pitch("AUTOMATION")

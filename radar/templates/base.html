@@ -60,6 +60,14 @@
 </nav>
 {% endif %}
 <main>{% block body %}{% endblock %}</main>
+{% if session.get("ok") %}
+<footer style="max-width:1100px;margin:0 auto;padding:0 16px 40px;color:var(--mut);font-size:12px">
+  Ofertas vía <a href="https://remotive.com">Remotive</a>, <a href="https://remoteok.com">Remote OK</a>,
+  <a href="https://himalayas.app">Himalayas</a>, <a href="https://jobicy.com">Jobicy</a>,
+  <a href="https://weworkremotely.com">We Work Remotely</a> y <a href="https://news.ycombinator.com">Hacker News</a>.
+  Cada botón de postulación lleva al aviso original.
+</footer>
+{% endif %}
 <div class="toast" id="toast"></div>
 <script>
   function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}

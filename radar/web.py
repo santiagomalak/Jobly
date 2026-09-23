@@ -19,6 +19,7 @@ from flask import Flask, abort, g, jsonify, redirect, render_template, request, 
 
 from . import ask as asistente
 from . import db
+from . import seguimiento as seguimiento_mod
 from .config import load_config
 from .memory import Memory
 from .models import Ticket
@@ -34,6 +35,20 @@ _MAX_IMPORT = 500
 
 def _url_segura(url: str) -> str:
     return url if str(url).lower().startswith(("http://", "https://")) else "#"
+
+
+_ETIQUETAS = {"tipo": "Tipo", "ubicacion": "Ubicación", "seniority": "Nivel", "salario": "Sueldo publicado"}
+_TIPOS = {"full_time": "Full-time", "contract": "Contrato", "freelance": "Freelance", "part_time": "Part-time", "empleo": "Empleo"}
+
+
+def _datos_oferta(tags: list[str]) -> list[tuple[str, str]]:
+    """Etiquetas de las fuentes estructuradas -> pares legibles para mostrar en el detalle."""
+    out = []
+    for tag in tags:
+        clave, _, valor = str(tag).partition(":")
+        if clave in _ETIQUETAS and valor:
+            out.append((_ETIQUETAS[clave], _TIPOS.get(valor, valor) if clave == "tipo" else valor))
+    return out
 
 
 def create_app(db_path: str | Path | None = None) -> Flask:
@@ -133,6 +148,7 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             m=s.metricas(int(cfg.get("objetivo_semanal", 5)), int(cfg.get("meta_mensual_usd", 900))),
             pipeline=s.pipeline(),
             revisar=s.revisar(int(cfg.get("review_score", 30))),
+            seguimientos=s.seguimientos_pendientes(),
             estados=ESTADOS,
         )
 
@@ -145,7 +161,11 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             datos = json.loads(row["payload"] or "{}")
         except ValueError:
             datos = {}
-        return render_template("ticket.html", t=row, d=datos, estados=ESTADOS)
+        debido = next((n for r, n, _ in store().seguimientos_pendientes() if r["fingerprint"] == fp), None)
+        return render_template(
+            "ticket.html", t=row, d=datos, estados=ESTADOS,
+            datos_oferta=_datos_oferta(datos.get("tags", [])), seguimiento_debido=debido,
+        )
 
     @app.get("/ask")
     def ask_page():
@@ -198,6 +218,22 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         build_pitch(t, memoria())
         store().set_pitch(fp, t.pitch, t.pitch_engine)
         return jsonify(pitch=t.pitch, engine=t.pitch_engine)
+
+    @app.post("/api/seguimiento")
+    def api_seguimiento():
+        datos = request.get_json(silent=True) or {}
+        fp = _fp_valido(datos)
+        fila = store().get(fp)
+        numero = int(fila["seguimientos"] or 0) + 1
+        if numero > 2:
+            return jsonify(error="Ya mandaste los 2 seguimientos. Después, silencio."), 400
+        texto, motor = seguimiento_mod.redactar(_ticket_desde_fila(fila), numero, memoria())
+        return jsonify(text=texto, engine=motor, numero=numero)
+
+    @app.post("/api/seguimiento_hecho")
+    def api_seguimiento_hecho():
+        datos = request.get_json(silent=True) or {}
+        return jsonify(ok=True, seguimientos=store().registrar_seguimiento(_fp_valido(datos)))
 
     @app.post("/api/ask")
     def api_ask():

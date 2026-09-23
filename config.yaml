@@ -11,3 +11,4 @@ hn_lookback_days: 35     # los avisos de HN viven en un hilo mensual
 review_score: 30         # descartados con al menos este score aparecen en "Para revisar" del CRM
 objetivo_semanal: 5      # KPI: propuestas enviadas por semana
 meta_mensual_usd: 900    # piso mensual de facturación
+pitch_pause_s: 4         # pausa entre pitches con IA (los planes gratis limitan tokens por minuto)
