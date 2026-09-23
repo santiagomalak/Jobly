@@ -33,10 +33,12 @@ scoring.py   → killers → módulo ganador → bonus/penalizaciones → ubicac
 memory.py    → carga SOLO perfil core + el módulo que ganó (no el CV completo)
 pitch.py     → pitch de proyecto (plan + precio) o carta de postulación si la fuente marca `tipo:` (SYSTEM_EMPLEO vive solo acá)
 seguimiento.py → mensajes de seguimiento 1 (48 h) y 2 (6 días), política de 06_plantillas_venta.md
+fit.py       → encaje aviso vs perfil: qué pide que tenés, qué no figura, años exigidos (sin LLM)
 ask.py       → asistente de formularios: responde con perfil + contexto personal (09_*.md)
 llm.py       → cascada Groq → OpenRouter :free → Ollama → plantilla sin IA
 notify.py    → embed + propuesta en bloque de código al webhook de Discord
-web.py       → CRM web (Flask): pipeline, detalle, preguntar, agregar/importar. Login obligatorio
+web.py       → CRM web (Flask): pipeline, detalle, preguntar, agregar/importar/marcador, analítica, seguimientos. Login obligatorio
+icono.py     → ícono PNG de la app instalable, generado sin librerías
 main.py      → CLI: run / doctor / stats / marcar / pitch / ask / serve / test-discord
 app.py       → entrypoint de Vercel (importa radar.web)
 ```
@@ -142,6 +144,7 @@ freelance; lo que hay son puestos (muchos Senior). Himalayas (búsqueda con `q`,
 `employment_type`, `country=AR`) y Jobicy sumaron oferta real: hoy pasan ~4 puestos por corrida y
 ~40 quedan en "Para revisar". Los puestos se puntúan con seniority/ubicación/tipo, no penalizan por
 "sin presupuesto", y se postulan con **carta** (no con plan de 1-3 días). El umbral sigue en 48.
+Análisis de mercado y posicionamiento: `docs/ANALISIS_COMPETITIVO.md`.
 Descartadas: **Freelancer.com** (su API responde sin login, pero sus Términos §33 prohíben acceso
 automatizado incluida la API sin permiso escrito; solo entra si Santiago lo obtiene), Upwork
 (RSS muerto), Torre (pide auth), Dice/Indeed/Glassdoor. Por investigar: Workana (sin API pública),

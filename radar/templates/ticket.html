@@ -34,6 +34,17 @@
   </div>
 </div>
 
+{% if encaje.tenes or encaje.faltan or encaje.anios %}
+<h2>Encaje con tu perfil</h2>
+<div class="card">
+  {% if encaje.tenes %}<div class="sub" style="margin:0 0 6px">Lo que pide y ya tenés</div>
+  <div class="row">{% for x in encaje.tenes %}<span class="badge s">{{ x }}</span>{% endfor %}</div>{% endif %}
+  {% if encaje.faltan %}<div class="sub" style="margin:12px 0 6px">Lo que menciona y no figura en tu perfil (no lo prometas en la carta)</div>
+  <div class="row">{% for x in encaje.faltan %}<span class="badge w">{{ x }}</span>{% endfor %}</div>{% endif %}
+  {% if encaje.anios %}<div class="sub" style="margin:12px 0 0">Menciona {{ encaje.anios }} años{% if encaje.anios >= 3 %}: es un requisito alto para tu experiencia comercial actual{% endif %}.</div>{% endif %}
+</div>
+{% endif %}
+
 {% if seguimiento_debido %}
 <h2>Seguimiento {{ seguimiento_debido }} vencido</h2>
 <div class="card">

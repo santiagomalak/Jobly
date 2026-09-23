@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -460,24 +461,30 @@ FETCHERS: dict[str, Callable[..., list[Ticket]]] = {
 }
 
 
+def _correr_fuente(src: dict[str, Any], cfg: dict[str, Any]) -> tuple[list[Ticket], str | None]:
+    """Una fuente, aislada: devuelve (tickets, error). Nunca levanta."""
+    kind = src.get("type", "rss")
+    fetcher = FETCHERS.get(kind)
+    if not fetcher:
+        return [], f"{src.get('name')}: tipo desconocido '{kind}'"
+    try:
+        found = fetcher(src["name"], src.get("url", ""), {**cfg, "_src": src})
+        log.info("%s: %d tickets", src["name"], len(found))
+        return found, None
+    except Exception as exc:  # noqa: BLE001 - una fuente caída no frena el radar
+        msg = f"{src.get('name')}: {type(exc).__name__}: {exc}"
+        log.warning(msg)
+        return [], msg
+
+
 def collect(sources: list[dict[str, Any]], cfg: dict[str, Any]) -> tuple[list[Ticket], list[str]]:
-    """Recorre todas las fuentes habilitadas. Devuelve (tickets, errores)."""
-    all_tickets: list[Ticket] = []
-    errors: list[str] = []
-    for src in sources:
-        if not src.get("enabled", True):
-            continue
-        kind = src.get("type", "rss")
-        fetcher = FETCHERS.get(kind)
-        if not fetcher:
-            errors.append(f"{src.get('name')}: tipo desconocido '{kind}'")
-            continue
-        try:
-            found = fetcher(src["name"], src.get("url", ""), {**cfg, "_src": src})
-            log.info("%s: %d tickets", src["name"], len(found))
-            all_tickets.extend(found)
-        except Exception as exc:  # noqa: BLE001 - una fuente caída no frena el radar
-            msg = f"{src.get('name')}: {type(exc).__name__}: {exc}"
-            log.warning(msg)
-            errors.append(msg)
+    """Recorre las fuentes habilitadas EN PARALELO (son independientes y varias tardan segundos
+    por consulta). El orden del resultado sigue el de sources.yaml. Devuelve (tickets, errores)."""
+    activas = [s for s in sources if s.get("enabled", True)]
+    if not activas:
+        return [], []
+    with ThreadPoolExecutor(max_workers=min(int(cfg.get("max_workers", 6)), len(activas))) as pool:
+        resultados = list(pool.map(lambda s: _correr_fuente(s, cfg), activas))
+    all_tickets = [t for found, _ in resultados for t in found]
+    errors = [err for _, err in resultados if err]
     return all_tickets, errors

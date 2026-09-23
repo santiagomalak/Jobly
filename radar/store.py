@@ -254,5 +254,39 @@ class Store:
             "racha_dias": racha,
         }
 
+    def analitica(self, semanas: int = 8) -> dict[str, Any]:
+        """Qué convierte: postulaciones, respuestas y cierres por módulo y por fuente, más el ritmo
+        semanal. Una "respuesta" es un ticket en estado respondido o ganado."""
+        ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = self.conn.execute(
+            "SELECT module, source, estado, postulado_at FROM tickets WHERE postulado_at IS NOT NULL"
+        ).fetchall()
+
+        def agrupar(campo: str) -> list[dict[str, Any]]:
+            grupos: dict[str, dict[str, int]] = {}
+            for r in rows:
+                g = grupos.setdefault(r[campo] or "—", {"enviadas": 0, "respuestas": 0, "ganadas": 0})
+                g["enviadas"] += 1
+                g["respuestas"] += r["estado"] in ("respondido", "ganado")
+                g["ganadas"] += r["estado"] == "ganado"
+            filas = [
+                {"nombre": k, **v, "tasa": round(100 * v["respuestas"] / v["enviadas"])}
+                for k, v in grupos.items()
+            ]
+            return sorted(filas, key=lambda f: (-f["enviadas"], f["nombre"]))
+
+        lunes = ahora.date() - timedelta(days=ahora.weekday())
+        cuentas = {lunes - timedelta(weeks=i): 0 for i in range(semanas)}
+        for r in rows:
+            dt = _parse_ts(r["postulado_at"])
+            if dt and (dt.date() - timedelta(days=dt.weekday())) in cuentas:
+                cuentas[dt.date() - timedelta(days=dt.weekday())] += 1
+        return {
+            "por_modulo": agrupar("module"),
+            "por_fuente": agrupar("source"),
+            "semanal": [{"semana": d.strftime("%d/%m"), "n": n} for d, n in sorted(cuentas.items())],
+            "total": len(rows),
+        }
+
     def close(self) -> None:
         self.conn.close()

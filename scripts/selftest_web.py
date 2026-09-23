@@ -129,6 +129,34 @@ def test_fuentes() -> None:
     check(j[0].tags[:3] == ["tipo:contract", "ubicacion:Anywhere", "seniority:Junior"], "Jobicy: etiquetas de tipo, ubicación y nivel")
 
 
+def test_fit_y_paralelo() -> None:
+    print("Encaje y recolección")
+    from radar import fit, sources
+    from radar.memory import Memory
+
+    mem = Memory(Path(__file__).resolve().parent.parent / "memoria")
+    t = Ticket(source="x", title="Data role", url="https://e.com/f", description="We need python, kubernetes and 5+ years of experience with dbt.")
+    enc = fit.analizar(t, mem)
+    check("python" in enc.tenes and "dbt" in enc.tenes, "encaje: lo que pide y ya tenés")
+    check("kubernetes" in enc.faltan, "encaje: lo que pide y no figura en tu perfil")
+    check(enc.anios == 5, "encaje: años exigidos")
+
+    orden: list[str] = []
+
+    def falso(name, url, cfg):
+        orden.append(name)
+        if name == "rota":
+            raise RuntimeError("boom")
+        return [Ticket(source=name, title=name, url=f"https://e.com/{name}")]
+
+    fuentes = [{"name": n, "type": "falso"} for n in ("a", "rota", "b")] + [{"name": "apagada", "type": "falso", "enabled": False}]
+    with patch.dict(sources.FETCHERS, {"falso": falso}):
+        tks, errores = sources.collect(fuentes, {})
+    check([x.title for x in tks] == ["a", "b"], "collect en paralelo: conserva el orden de sources.yaml")
+    check(len(errores) == 1 and "rota" in errores[0], "collect: una fuente rota no tumba las demás")
+    check("apagada" not in orden, "collect: las fuentes deshabilitadas no corren")
+
+
 def test_store(path: Path) -> None:
     print("Store")
     s = Store(path)
@@ -195,6 +223,11 @@ def test_web(path: Path) -> None:
 
     r = c.get("/healthz")
     check(r.status_code == 200, "/healthz responde sin login")
+    r = c.get("/manifest.webmanifest")
+    check(r.status_code == 200 and r.json["display"] == "standalone", "el manifest de la app es público")
+    r = c.get("/icon-192.png")
+    check(r.status_code == 200 and r.data[:4] == bytes([137]) + b"PNG", "el ícono PNG es público")
+    check(c.get("/icon-100.png").status_code == 404, "solo hay íconos de 192 y 512")
     r = c.get("/")
     check(r.status_code == 302 and "/login" in r.headers["Location"], "sin sesión redirige a /login")
     r = c.post("/api/marcar", json={})
@@ -229,6 +262,9 @@ def test_web(path: Path) -> None:
         r = c.get(f"/ticket/{fp}")
         check(r.status_code == 200 and b"Respuesta de prueba" in r.data, "el detalle muestra el pitch")
         check(b"Abrir postulaci" in r.data, "el detalle tiene el botón de postulación")
+        check(b"Encaje con tu perfil" in r.data, "el detalle muestra el encaje con tu perfil")
+        an = c.get("/analitica")
+        check(an.status_code == 200 and "Ritmo semanal" in an.get_data(as_text=True), "la pantalla de analítica carga")
         check(c.get("/ticket/../../etc/passwd").status_code == 404, "fingerprint inválido da 404")
 
         r = c.post("/api/marcar", json={"fingerprint": fp, "estado": "postulado"})
@@ -287,6 +323,7 @@ def main() -> int:
     test_turso_adapter()
     test_fuentes()
     test_notify()
+    test_fit_y_paralelo()
     with tempfile.TemporaryDirectory() as tmp:
         test_store(Path(tmp) / "a.sqlite")
         test_web(Path(tmp) / "b.sqlite")

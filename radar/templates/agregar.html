@@ -21,6 +21,13 @@
   <div class="row" style="margin-top:14px"><button class="btn primary" id="agregar">Agregar y generar pitch</button><span class="sub" id="estado1" style="margin:0"></span></div>
 </div>
 
+<h2>Guardar con un clic desde cualquier sitio</h2>
+<div class="card">
+  <div class="sub">Arrastrá este botón a tu barra de marcadores. En una oferta (Workana, LinkedIn, lo que sea), seleccioná el texto de la descripción y tocalo: se abre esta pantalla con el link, el título y el texto ya cargados. Vos navegás y elegís qué guardar; nada se envía ni se automatiza en el otro sitio.</div>
+  <a class="btn primary" id="bookmarklet" href="#">Guardar en Jobly</a>
+  <div class="sub" style="margin:10px 0 0">En el celular: copiá el enlace de este botón como marcador y pegá el texto de la oferta acá a mano.</div>
+</div>
+
 <h2>Importar planilla (Excel / Google Sheets)</h2>
 <div class="card">
   <div class="sub">Copiá las filas desde tu planilla y pegalas acá, con la fila de encabezados. Columnas: <b>url</b> (obligatoria), <b>title</b>, <b>description</b>, <b>budget</b> (en español también: link, titulo, descripcion, presupuesto). Hasta 500 filas. Se puntúan todas; las que pasan el filtro aparecen en Pendientes.</div>
@@ -32,6 +39,15 @@
 {% block js %}
 <script>
   const $ = id => document.getElementById(id);
+
+  // Datos que manda el marcador (?url=&title=&text=): se cargan por JS, nunca como HTML.
+  const q = new URLSearchParams(location.search);
+  if (q.get('url')) $('url').value = q.get('url');
+  if (q.get('title')) $('title').value = q.get('title');
+  if (q.get('text')) $('description').value = q.get('text');
+  $('bookmarklet').href = "javascript:(function(){var s=String(window.getSelection());window.open('" + location.origin +
+    "/agregar?url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title)+'&text='+encodeURIComponent(s.slice(0,3500)),'_blank');})();";
+  $('bookmarklet').addEventListener('click', e => { e.preventDefault(); toast('Arrastralo a la barra de marcadores'); });
   $('agregar').onclick = async () => {
     $('agregar').disabled = true; $('estado1').textContent = 'Puntuando y redactando el pitch…';
     try {

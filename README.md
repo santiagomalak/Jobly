@@ -71,8 +71,10 @@ python -m radar.main run
 ## CRM web y despliegue
 
 `radar/web.py` (Flask) es el CRM: pipeline por estado, KPI semanal, detalle de cada oferta con
-pitch editable, el asistente **Preguntar** y **Agregar** (una oferta suelta o filas pegadas desde
-Excel/Sheets). Requiere login (`JOBLY_PASSWORD`). Para tenerlo online en Vercel con base
+pitch editable, "Encaje con tu perfil", seguimientos vencidos, **Analítica**, el asistente
+**Preguntar** y **Agregar** (una oferta suelta, filas pegadas desde Excel/Sheets o el marcador
+"Guardar en Jobly" para Workana, LinkedIn o cualquier portal). Se instala como app en el celular.
+Contexto de mercado: `docs/ANALISIS_COMPETITIVO.md`. Requiere login (`JOBLY_PASSWORD`). Para tenerlo online en Vercel con base
 compartida en Turso: **`docs/DEPLOY.md`**.
 
 ---

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Analítica{% endblock %}
+
+{% macro tabla(filas, titulo) %}
+<h2>{{ titulo }}</h2>
+<div class="card" style="padding:6px 14px">
+  {% for f in filas %}
+  <div class="row" style="justify-content:space-between;padding:9px 0;{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
+    <span style="font-weight:600">{{ f.nombre }}</span>
+    <span class="row" style="gap:6px">
+      <span class="badge">{{ f.enviadas }} enviadas</span>
+      <span class="badge s">{{ f.respuestas }} respuestas</span>
+      <span class="badge">{{ f.ganadas }} ganadas</span>
+      {% if f.enviadas >= 5 %}<span class="badge s">{{ f.tasa }}%</span>{% else %}<span class="badge">pocos datos</span>{% endif %}
+    </span>
+  </div>
+  {% else %}<div class="empty">Todavía no hay postulaciones registradas.</div>{% endfor %}
+</div>
+{% endmacro %}
+
+{% block body %}
+<h1>Analítica</h1>
+<div class="sub">{{ a.total }} postulaciones registradas. Las tasas se muestran desde 5 envíos por grupo: antes es ruido.</div>
+
+<h2>Ritmo semanal <span class="sub" style="font-weight:400">(objetivo: {{ objetivo }} por semana)</span></h2>
+<div class="card">
+  {% set maximo = [objetivo, (a.semanal|map(attribute='n')|max)]|max or 1 %}
+  <div style="display:flex;align-items:flex-end;gap:8px;height:120px">
+    {% for s in a.semanal %}
+    <div style="flex:1;text-align:center">
+      <div style="height:{{ (100 * s.n / maximo)|round|int }}px;background:{% if s.n >= objetivo %}var(--acc){% else %}#2f6b47{% endif %};border-radius:6px 6px 0 0;min-height:2px"></div>
+      <div class="sub" style="margin:4px 0 0;font-size:11px">{{ s.n }}<br>{{ s.semana }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="sub" style="margin:10px 0 0">Barra brillante = semana que llegó al objetivo.</div>
+</div>
+
+{{ tabla(a.por_modulo, 'Por tipo de trabajo') }}
+{{ tabla(a.por_fuente, 'Por fuente') }}
+{% endblock %}

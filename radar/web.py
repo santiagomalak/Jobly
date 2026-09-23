@@ -15,10 +15,11 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, url_for
 
 from . import ask as asistente
-from . import db
+from . import db, fit
+from . import icono as icono_mod
 from . import seguimiento as seguimiento_mod
 from .config import load_config
 from .memory import Memory
@@ -39,6 +40,11 @@ def _url_segura(url: str) -> str:
 
 _ETIQUETAS = {"tipo": "Tipo", "ubicacion": "Ubicación", "seniority": "Nivel", "salario": "Sueldo publicado"}
 _TIPOS = {"full_time": "Full-time", "contract": "Contrato", "freelance": "Freelance", "part_time": "Part-time", "empleo": "Empleo"}
+
+
+def _ticket_desde_datos(datos: dict) -> Ticket:
+    datos = {k: v for k, v in datos.items() if k != "fingerprint"}
+    return Ticket(**datos)
 
 
 def _datos_oferta(tags: list[str]) -> list[tuple[str, str]]:
@@ -91,7 +97,7 @@ def create_app(db_path: str | Path | None = None) -> Flask:
     # ---------- guardia ----------
     @app.before_request
     def guardia():
-        if request.endpoint == "healthz":
+        if request.endpoint in ("healthz", "manifest", "icono"):  # públicos: no contienen datos
             return None
         if not password:
             return "Falta configurar JOBLY_PASSWORD. La app no responde sin contraseña.", 503
@@ -113,13 +119,29 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"
-        resp.headers["Cache-Control"] = "no-store"
+        resp.headers.setdefault("Cache-Control", "no-store")
         return resp
 
     # ---------- páginas ----------
     @app.get("/healthz")
     def healthz():
         return jsonify(ok=True)
+
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        resp = jsonify(
+            name="Jobly", short_name="Jobly", start_url="/", display="standalone", lang="es",
+            background_color="#0b0d12", theme_color="#0b0d12",
+            icons=[{"src": f"/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "any"} for n in (192, 512)],
+        )
+        resp.headers["Content-Type"] = "application/manifest+json"
+        return resp
+
+    @app.get("/icon-<int:lado>.png")
+    def icono(lado: int):
+        if lado not in (192, 512):
+            abort(404)
+        return Response(icono_mod.png(lado), mimetype="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -162,9 +184,14 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         except ValueError:
             datos = {}
         debido = next((n for r, n, _ in store().seguimientos_pendientes() if r["fingerprint"] == fp), None)
+        try:
+            tk = _ticket_desde_datos(datos)
+        except TypeError:  # payload dañado o vacío: se analiza con lo mínimo de la fila
+            tk = Ticket(source=row["source"], title=row["title"], url=row["url"])
         return render_template(
             "ticket.html", t=row, d=datos, estados=ESTADOS,
             datos_oferta=_datos_oferta(datos.get("tags", [])), seguimiento_debido=debido,
+            encaje=fit.analizar(tk, memoria()),
         )
 
     @app.get("/ask")
@@ -178,6 +205,10 @@ def create_app(db_path: str | Path | None = None) -> Flask:
                 d = {}
             oferta = f"{row['title']}\n{d.get('description', '')}"[:3000]
         return render_template("ask.html", oferta=oferta)
+
+    @app.get("/analitica")
+    def analitica_page():
+        return render_template("analitica.html", a=store().analitica(), objetivo=int(cfg.get("objetivo_semanal", 5)))
 
     @app.get("/agregar")
     def agregar_page():
@@ -206,9 +237,7 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         return jsonify(ok=True)
 
     def _ticket_desde_fila(row) -> Ticket:
-        datos = json.loads(row["payload"] or "{}")
-        datos.pop("fingerprint", None)
-        return Ticket(**datos)
+        return _ticket_desde_datos(json.loads(row["payload"] or "{}"))
 
     @app.post("/api/pitch")
     def api_pitch():
