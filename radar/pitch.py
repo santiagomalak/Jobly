@@ -41,6 +41,7 @@ Descripción:
 Escribí la propuesta de primer contacto de 3 párrafos.
 Cotizá dentro del rango del módulo, coherente con el presupuesto detectado.
 Si no hay una PoC publicada para este módulo, describí el proyecto análogo sin inventar un link.
+Los ÚNICOS trabajos pasados que podés mencionar son los de PROYECTOS REALES, con los datos exactos con que figuran ahí: no agregues cifras, clientes, integraciones ni funciones que no estén escritas. Si ninguno se parece de verdad al pedido, no cites ninguno y cerrá solo con la pregunta técnica.
 """
 
 
@@ -67,7 +68,7 @@ def _fallback(ticket: Ticket, mem: Memory) -> str:
         f"• Manejo de errores con alerta cuando algo falla\n"
         f"• Documentación + video corto para que quede tuyo\n"
         f"Plazo: 1–3 días hábiles. Rango: {rango}.\n\n"
-        f"Hice algo muy parecido antes y te lo puedo mostrar funcionando. "
+        f"{'Tengo trabajo real comparable y te lo puedo mostrar funcionando. ' if mem.proyectos_reales(modulo) else ''}"
         f"{primera}"
     )
 

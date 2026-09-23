@@ -2,24 +2,35 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from .models import Ticket
 
-# Presupuestos en el texto: $300, USD 300, 300 usd, $250-$400, 25/hr
+# Presupuestos en el texto: $300, USD 300, 300 usd, $250-$400, $1,500, $90k, 25/hr
+_NUM = r"\d{1,3}(?:[.,]\d{3})+|\d{2,6}"
 _MONEY = re.compile(
-    r"(?:usd|us\$|\$)\s?(\d{2,6})(?:\s?[-–a]\s?(?:usd|us\$|\$)?\s?(\d{2,6}))?"
-    r"|(\d{2,6})\s?(?:usd|dolares|dólares)",
+    rf"(?:usd|us\$|\$)\s?({_NUM})(k)?(?:\s?[-–a]\s?(?:usd|us\$|\$)?\s?(?:{_NUM})k?)?"
+    rf"|({_NUM})\s?(?:usd|dolares|dólares)",
     re.I,
 )
 _HOURLY = re.compile(r"(\d{1,3})\s?(?:usd|\$)?\s?/\s?(?:hr|hour|h|hora)", re.I)
+
+# Regiones que incluyen a Santiago (Argentina, UTC-3). Solo se evalúa si la fuente informa ubicación.
+_REGION_OK = re.compile(
+    r"worldwide|anywhere|everywhere|global|any location|latam|latin|south america|americas|argentina",
+    re.I,
+)
+
+# Un ticket de 1-3 días no vale más que esto. Por encima es un sueldo anual, no un proyecto.
+_TOPE_PROYECTO_USD = 20_000
 
 
 def extract_budget(text: str) -> int | None:
     """Devuelve el presupuesto estimado en USD, o None si no se puede inferir.
 
     En rangos toma el extremo bajo (pesimismo deliberado: mejor descartar de más).
-    En tarifas por hora estima 12 h de trabajo.
+    En tarifas por hora estima 12 h de trabajo. Cifras de sueldo anual (> tope) se ignoran.
     """
     hourly = _HOURLY.search(text)
     if hourly:
@@ -34,17 +45,34 @@ def extract_budget(text: str) -> int | None:
         if not low:
             continue
         try:
-            value = int(low)
+            value = int(re.sub(r"[.,]", "", low)) * (1000 if m.group(2) else 1)
         except ValueError:
             continue
-        if not 20 <= value <= 100_000:
+        if not 20 <= value <= _TOPE_PROYECTO_USD:
             continue
         best = value if best is None else min(best, value)
     return best
 
 
+@lru_cache(maxsize=None)
+def _patron(kw: str, exacta: bool) -> re.Pattern[str]:
+    """Keyword con límites de palabra. La búsqueda por subcadena hacía que "$5" matara "$500",
+    "rag" pegara en "average" y "bot" en "both".
+
+    Inicio siempre en límite. Final: exacta (killers) = sin letra/dígito después ni decimales;
+    si no, las keywords cortas (<= 4) son palabra completa (con plural) y las largas admiten
+    sufijos ("automat" -> "automation", "scraper" -> "scrapers").
+    """
+    base = re.escape(kw.lower().strip())
+    if exacta:
+        fin = r"(?![a-z0-9]|[.,]\d)"
+    else:
+        fin = r"s?(?![a-z0-9])" if len(kw.strip()) <= 4 else ""
+    return re.compile(r"(?<![a-z0-9])" + base + fin)
+
+
 def _hits(text: str, words: list[str], cap: int = 3) -> list[str]:
-    found = [w for w in words if w in text]
+    found = [w for w in words if _patron(w, False).search(text)]
     return found[:cap]
 
 
@@ -54,7 +82,7 @@ def score_ticket(ticket: Ticket, taxonomy: dict[str, Any], cfg: dict[str, Any]) 
 
     # 1. Killers — descarte inmediato
     for killer in taxonomy.get("killers", []):
-        if str(killer).lower() in text:
+        if _patron(str(killer), True).search(text):
             ticket.verdict = "discard"
             ticket.reasons = [f"killer: '{killer}'"]
             ticket.score = 0
@@ -81,13 +109,24 @@ def score_ticket(ticket: Ticket, taxonomy: dict[str, Any], cfg: dict[str, Any]) 
 
     # 3. Bonus y penalizaciones transversales
     for word, pts in taxonomy.get("bonus", {}).items():
-        if str(word).lower() in text:
+        if _patron(str(word), False).search(text):
             score += int(pts)
             reasons.append(f"bonus '{word}': +{pts}")
     for word, pts in taxonomy.get("penalizaciones", {}).items():
-        if str(word).lower() in text:
+        if _patron(str(word), False).search(text):
             score += int(pts)
             reasons.append(f"penaliza '{word}': {pts}")
+
+    # 3b. Elegibilidad y tipo de contrato (etiquetas que arman las fuentes estructuradas)
+    for tag in ticket.tags:
+        if tag.startswith("ubicacion:"):
+            lugar = tag.split(":", 1)[1].strip()
+            if lugar and not _REGION_OK.search(lugar):
+                score -= 30
+                reasons.append(f"ubicación requerida sin Argentina/LATAM ({lugar[:40]}): -30")
+        elif tag in ("tipo:contract", "tipo:freelance"):
+            score += 6
+            reasons.append("tipo contrato/freelance: +6")
 
     # 4. Presupuesto
     budget = extract_budget(f"{ticket.raw_budget} {ticket.title} {ticket.description}")

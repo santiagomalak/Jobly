@@ -61,6 +61,9 @@ killers:
   - "join our team"
   - "we're hiring"
   - "interview process"
+  # Marketplaces de talento: listan 50 tecnologías en el mismo aviso y matchean todo
+  - "not your tech stack"      # Lemon.io
+  - "application-only"         # A.Team
 
 bonus:
   # Suman puntos extra, transversales a los módulos
@@ -90,6 +93,13 @@ penalizaciones:
   "senior only": -8
   "team lead": -10
   "salary": -30
+  # Años exigidos: tu experiencia comercial es de ~1 año, no compitas donde piden 4+
+  "4+ years": -10
+  "5+ years": -14
+  "6+ years": -16
+  "7+ years": -18
+  "8+ years": -20
+  "10+ years": -25
 ```
 
 ## Cómo mejorar esto con el tiempo

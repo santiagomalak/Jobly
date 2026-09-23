@@ -70,10 +70,59 @@ FIXTURES = [
 ]
 
 
+def _ticket(desc: str, title: str = "n8n workflow automation with webhook", tags=None) -> Ticket:
+    return Ticket(source="t", title=title, url="https://example.com/x", description=desc, tags=tags or [])
+
+
+def checks_motor(cfg: dict, tax: dict) -> None:
+    """Regresiones del motor de scoring. Sin internet ni LLM."""
+    from radar.scoring import extract_budget
+
+    # Presupuestos: sueldo anual no es presupuesto, miles con coma y sufijo k
+    assert extract_budget("$90k - $105k") is None, "un sueldo anual no es un presupuesto de proyecto"
+    assert extract_budget("Budget $1,500 fixed") == 1500
+    assert extract_budget("Budget: $500") == 500
+    assert extract_budget("USD 300") == 300
+
+    largo = " Need a clean integration between our CRM and Google Sheets, documentation included. " * 2
+
+    # El killer "$5" no puede matar "$500" (subcadena) ni "$5,000"
+    for monto in ("$500", "$5,000"):
+        t = score_ticket(_ticket(f"Budget {monto}." + largo), tax, cfg)
+        assert not (t.reasons and str(t.reasons[0]).startswith("killer")), f"killer por subcadena con {monto}"
+    t = score_ticket(_ticket("Pay is $5 total." + largo), tax, cfg)
+    assert t.reasons[0].startswith("killer"), "el killer '$5' debe seguir matando $5 real"
+
+    # Keywords cortas: "rag" no es "average", "bot" no es "both"
+    t = score_ticket(_ticket("Average brag storage both sides.", title="Marketing role"), tax, cfg)
+    assert t.module == "" and t.verdict == "discard", f"falso positivo por subcadena: {t.matched_keywords}"
+
+    # Ubicación: un aviso solo para Europa penaliza; uno que incluye Argentina no
+    base = "n8n workflow automation webhook integration crm. Budget $300." + largo
+    eu = score_ticket(_ticket(base, tags=["ubicacion:Europe"]), tax, cfg)
+    ar = score_ticket(_ticket(base, tags=["ubicacion:USA, Canada, Argentina"]), tax, cfg)
+    assert eu.score == ar.score - 30, "la ubicación sin Argentina/LATAM debe restar 30"
+    assert any("ubicación" in r for r in eu.reasons)
+
+    # Años exigidos
+    junior = score_ticket(_ticket(base), tax, cfg)
+    senior = score_ticket(_ticket(base + " 8+ years of experience."), tax, cfg)
+    assert senior.score < junior.score, "pedir 8+ años debe penalizar"
+
+    # Contexto del pitch: nada de PoCs pendientes ni proyectos de otro módulo
+    mem = Memory(Path(cfg["root"]) / cfg["memory_dir"])
+    ctx_auto = mem.contexto_pitch("AUTOMATION")
+    assert "dbt-ecommerce-starter" not in ctx_auto, "una PoC PENDIENTE llegó al prompt"
+    assert "Olist" not in ctx_auto, "un proyecto DATA llegó al prompt de AUTOMATION"
+    assert "Olist" in mem.contexto_pitch("DATA")
+
+
 def main() -> int:
     cfg = load_config()
     mem = Memory(Path(cfg["root"]) / cfg["memory_dir"])
     tax = mem.taxonomia()
+    checks_motor(cfg, tax)
+    print("checks del motor OK")
 
     print("=" * 74)
     print("SCORING")

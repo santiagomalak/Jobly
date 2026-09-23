@@ -54,11 +54,37 @@ class Memory:
         return self.read(mapping.get(nombre.upper(), ""))
 
     def pocs_de(self, modulo: str) -> str:
-        """Devuelve solo la sección del módulo pedido dentro de 03_pocs_github.md."""
+        """Sección del módulo en 03_pocs_github.md, SIN las PoCs ⬜ PENDIENTE.
+
+        Una PoC pendiente no existe: si llega al prompt, el LLM la cita como trabajo hecho.
+        Devuelve "" si no queda ninguna fila real.
+        """
         full = self.read("03_pocs_github.md")
         pattern = rf"## MÓDULO {re.escape(modulo.upper())}(.*?)(?=\n## |\Z)"
         m = re.search(pattern, full, re.S)
-        return m.group(1).strip() if m else ""
+        if not m:
+            return ""
+        lineas = [ln for ln in m.group(1).strip().splitlines() if "⬜" not in ln]
+        filas = [ln for ln in lineas if ln.startswith("|")]
+        if len(filas) <= 2:  # solo encabezado y separador
+            return ""
+        return "\n".join(lineas).strip()
+
+    def contexto_personal(self) -> str:
+        return self.read("09_contexto_personal.md")
+
+    def proyectos_reales(self, modulo: str) -> str:
+        """Proyectos verificables de 09_contexto_personal.md que declaran este módulo."""
+        full = self.contexto_personal()
+        sec = re.search(r"## Proyectos reales verificables(.*?)(?=\n## |\Z)", full, re.S)
+        if not sec:
+            return ""
+        elegidos = []
+        for bloque in re.split(r"\n(?=- \*\*)", sec.group(1)):
+            tag = re.search(r"\(módulos? ([^)]*)\)", bloque)
+            if tag and modulo.upper() in tag.group(1).upper():
+                elegidos.append(bloque.strip())
+        return "\n".join(elegidos)
 
     def plantillas(self) -> str:
         return self.read("06_plantillas_venta.md")
@@ -92,6 +118,8 @@ class Memory:
             self.modulo(modulo),
             f"\n=== PRUEBAS DISPONIBLES ({modulo}) ===",
             self.pocs_de(modulo) or "(sin PoCs publicadas aún para este módulo)",
+            f"\n=== PROYECTOS REALES ({modulo}) — única prueba que podés citar ===",
+            self.proyectos_reales(modulo) or "(ninguno para este módulo: no cites proyectos)",
             "\n=== REGLAS DE REDACCIÓN ===",
             self._reglas_redaccion(),
         ]

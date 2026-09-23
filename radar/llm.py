@@ -15,13 +15,14 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import requests
 
 log = logging.getLogger("radar.llm")
 
-TIMEOUT = 45
+TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "45"))
 
 
 class LLMResult:
@@ -35,7 +36,7 @@ def _groq(system: str, user: str) -> str | None:
     key = os.environ.get("GROQ_API_KEY", "").strip()
     if not key:
         return None
-    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    model = os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b"
     r = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -63,7 +64,7 @@ def _openrouter(system: str, user: str) -> str | None:
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not key:
         return None
-    model = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+    model = os.environ.get("OPENROUTER_MODEL") or "google/gemma-4-31b-it:free"
     r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={
@@ -112,12 +113,29 @@ def _ollama(system: str, user: str) -> str | None:
 PROVIDERS = [("groq", _groq), ("openrouter", _openrouter), ("ollama", _ollama)]
 
 
-def generate(system: str, user: str, fallback: str) -> LLMResult:
+def _call(name: str, fn, system: str, user: str) -> str | None:
+    """Una llamada; ante 429 espera lo que pide el proveedor (tope 8 s) y reintenta una vez."""
+    try:
+        return fn(system, user)
+    except requests.HTTPError as exc:
+        resp = exc.response
+        if resp is None or resp.status_code != 429:
+            raise
+        try:
+            espera = min(float(resp.headers.get("retry-after", 3)), 8.0)
+        except ValueError:
+            espera = 3.0
+        log.warning("%s pidió calma (429), reintento en %.0f s", name, espera)
+        time.sleep(espera)
+        return fn(system, user)
+
+
+def generate(system: str, user: str, fallback: str, min_len: int = 80) -> LLMResult:
     """Intenta cada proveedor en orden. Si todos fallan, devuelve el fallback."""
     for name, fn in PROVIDERS:
         try:
-            out = fn(system, user)
-            if out and len(out.strip()) > 80:
+            out = _call(name, fn, system, user)
+            if out and len(out.strip()) >= min_len:
                 return LLMResult(_sanitize(out), name)
             if out:
                 log.warning("%s devolvió una respuesta demasiado corta", name)
