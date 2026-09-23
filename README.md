@@ -9,10 +9,11 @@ para copiar en Discord.
 ```
 FUENTES          MOTOR                      SALIDA
 ─────────        ──────────────────         ─────────────────
-Upwork RSS   ┐   dedup (sqlite)             #02-propuestas-listas
-RemoteOK     ├─► scoring vs memoria/  ──►   ticket + pitch de 3 párrafos
-Reddit       │   LLM en cascada (gratis)    listo para copiar y pegar
-WWR / HN     ┘   pitch de 3 párrafos
+Himalayas    ┐   dedup (SQLite/Turso)       Discord + CRM web
+Remotive     │   scoring vs memoria/    ──► ticket + pitch (o carta)
+RemoteOK     ├─► LLM en cascada (gratis)    listo para revisar y enviar vos
+Jobicy / HN  │   encaje con tu perfil
+Reddit/Sheet ┘   seguimientos
 ```
 
 ---
@@ -94,13 +95,16 @@ radar-freelance/
 │   ├── 07_objeciones.md
 │   └── 08_taxonomia_keywords.md    ← el router del scoring. Editalo cada domingo.
 ├── radar/                      ← FASE 2: el motor
-│   ├── sources.py                  RSS / RemoteOK / Reddit / HN
+│   ├── sources.py                  Himalayas / Remotive / RemoteOK / Jobicy / HN / Reddit / Sheet
 │   ├── scoring.py                  killers, módulos, bonus, presupuesto
 │   ├── memory.py                   carga modular de la memoria
 │   ├── llm.py                      cascada Groq → OpenRouter → Ollama → plantilla
 │   ├── pitch.py                    generación del pitch de 3 párrafos
 │   ├── notify.py                   embeds de Discord
-│   ├── store.py                    dedup y persistencia (sqlite)
+│   ├── store.py, db.py             dedup, estados, métricas (SQLite local o Turso)
+│   ├── web.py, templates/          CRM web (Flask) con login
+│   ├── ask.py, fit.py              asistente de formularios y encaje con tu perfil
+│   ├── seguimiento.py              mensajes de seguimiento (48 h y 6 días)
 │   └── main.py                     CLI
 ├── prompts/                    ← FASE 3: copiloto de ventas
 ├── n8n/                            workflows para importar
@@ -126,7 +130,7 @@ probablemente mediocre en lo tuyo". Un pitch que habla solo de n8n le dice "esto
 
 | Nivel | Proveedor | Costo | Cuándo entra |
 |---|---|---|---|
-| 1 | Groq (`llama-3.3-70b`) | gratis | siempre que haya `GROQ_API_KEY` |
+| 1 | Groq (`openai/gpt-oss-120b`) | gratis | siempre que haya `GROQ_API_KEY` |
 | 2 | OpenRouter modelos `:free` | gratis | si Groq falla o llegó al rate limit |
 | 3 | Ollama local | gratis | si no hay internet o los anteriores caen |
 | 4 | **Plantilla sin IA** | gratis | último recurso — siempre funciona |
