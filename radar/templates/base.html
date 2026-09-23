@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0d12">
+<title>{% block title %}Jobly{% endblock %} · Jobly</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0d12; --card:#151922; --line:#262b36; --txt:#e5e7eb; --mut:#9ca3af;
+          --acc:#22c55e; --acc2:#16a34a; --warn:#f59e0b; --bad:#ef4444; --blue:#3b82f6; --pur:#a855f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); line-height:1.45;
+         font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  a { color:inherit; }
+  nav { position:sticky; top:0; z-index:5; background:rgba(11,13,18,.92); backdrop-filter:blur(8px);
+        border-bottom:1px solid var(--line); display:flex; align-items:center; gap:4px; padding:10px 16px; }
+  nav .logo { font-weight:800; letter-spacing:.3px; margin-right:10px; text-decoration:none; }
+  nav .logo span { color:var(--acc); }
+  nav a.l { text-decoration:none; color:var(--mut); padding:7px 12px; border-radius:8px; font-size:14px; }
+  nav a.l:hover, nav a.l.on { color:var(--txt); background:var(--card); }
+  nav form { margin-left:auto; }
+  main { max-width:1100px; margin:0 auto; padding:18px 16px 60px; }
+  h1 { font-size:22px; margin:6px 0 4px; } h2 { font-size:16px; margin:22px 0 8px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
+  .kpi .n { font-size:26px; font-weight:800; } .kpi .t { color:var(--mut); font-size:12px; margin-top:2px; }
+  .bar { background:var(--line); border-radius:6px; height:8px; overflow:hidden; margin-top:8px; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--acc2),var(--acc)); }
+  .btn { display:inline-block; border:1px solid var(--line); background:var(--card); color:var(--txt);
+         padding:10px 14px; border-radius:10px; font-size:14px; cursor:pointer; text-decoration:none; font-family:inherit; }
+  .btn:hover { border-color:#3a4150; } .btn:disabled { opacity:.5; cursor:default; }
+  .btn.primary { background:var(--acc); border-color:var(--acc); color:#04140a; font-weight:700; }
+  .btn.primary:hover { background:#34d673; }
+  .btn.on { border-color:var(--acc); color:var(--acc); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .badge { background:#1f2430; color:var(--mut); border-radius:20px; padding:2px 9px; font-size:12px; white-space:nowrap; }
+  .badge.s { color:var(--acc); } .badge.w { color:var(--warn); }
+  input, textarea, select { width:100%; background:#0f1218; color:var(--txt); border:1px solid var(--line);
+         border-radius:10px; padding:10px 12px; font:inherit; font-size:15px; }
+  input:focus, textarea:focus, select:focus { outline:none; border-color:var(--acc); }
+  textarea { resize:vertical; min-height:110px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 5px; }
+  .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#1f2430; border:1px solid var(--line);
+           padding:10px 16px; border-radius:10px; font-size:14px; opacity:0; pointer-events:none; transition:.2s; z-index:9; }
+  .toast.show { opacity:1; } .err { color:var(--bad); font-size:14px; }
+  .empty { color:var(--mut); text-align:center; padding:30px 10px; font-size:14px; }
+  @media (max-width:560px) { main { padding:14px 12px 60px; } nav a.l { padding:7px 9px; } }
+</style>
+</head>
+<body>
+{% if session.get("ok") %}
+<nav>
+  <a class="logo" href="{{ url_for('index') }}">Job<span>ly</span></a>
+  <a class="l {% if request.endpoint=='index' %}on{% endif %}" href="{{ url_for('index') }}">Pipeline</a>
+  <a class="l {% if request.endpoint=='ask_page' %}on{% endif %}" href="{{ url_for('ask_page') }}">Preguntar</a>
+  <a class="l {% if request.endpoint=='agregar_page' %}on{% endif %}" href="{{ url_for('agregar_page') }}">Agregar</a>
+  <form method="post" action="{{ url_for('logout') }}"><button class="btn" style="padding:6px 10px;font-size:13px">Salir</button></form>
+</nav>
+{% endif %}
+<main>{% block body %}{% endblock %}</main>
+<div class="toast" id="toast"></div>
+<script>
+  function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+  async function api(path, body){
+    const r = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    let j={}; try{ j = await r.json(); }catch(e){}
+    if(!r.ok) throw Object.assign(new Error(j.error||('Error '+r.status)),{data:j,status:r.status});
+    return j;
+  }
+  async function copiar(texto){
+    try{ await navigator.clipboard.writeText(texto); toast('Copiado'); }
+    catch(e){ const a=document.createElement('textarea'); a.value=texto; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); toast('Copiado'); }
+  }
+</script>
+{% block js %}{% endblock %}
+</body>
+</html>

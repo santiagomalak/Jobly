@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+
+{% macro tarjeta(t) %}
+<a class="card tk" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px">
+  <div style="font-weight:650;font-size:15px">{{ t['title'][:110] }}</div>
+  <div class="row" style="margin-top:7px">
+    <span class="badge s">score {{ t['score'] }}</span>
+    {% if t['module'] %}<span class="badge">{{ t['module'] }}</span>{% endif %}
+    <span class="badge">{{ t['source'] }}</span>
+    {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }}</span>{% endif %}
+    {% if t['notas'] %}<span class="badge w">con notas</span>{% endif %}
+  </div>
+</a>
+{% endmacro %}
+
+{% block body %}
+<h1>Pipeline</h1>
+<div class="sub">Lo que pasó el filtro, listo para postular. Tocá un ticket para ver la oferta completa y el pitch.</div>
+
+<div class="grid">
+  <div class="card kpi">
+    <div class="n">{{ m.enviadas_7d }}<span style="font-size:15px;color:var(--mut)"> / {{ m.objetivo_semanal }}</span></div>
+    <div class="t">propuestas enviadas (7 días)</div>
+    <div class="bar"><i style="width:{{ [100, (100 * m.enviadas_7d / m.objetivo_semanal)|round|int]|min if m.objetivo_semanal else 0 }}%"></i></div>
+  </div>
+  <div class="card kpi"><div class="n">{{ m.pendientes }}</div><div class="t">pendientes por postular</div></div>
+  <div class="card kpi"><div class="n">{{ m.racha_dias }}<span style="font-size:15px;color:var(--mut)"> días</span></div><div class="t">racha postulando</div></div>
+  <div class="card kpi"><div class="n">{{ m.tasa_respuesta }}%</div><div class="t">tasa de respuesta ({{ m.respondidas }} de {{ m.enviadas_total }})</div></div>
+  <div class="card kpi">
+    <div class="n">USD {{ m.facturado_mes_usd }}<span style="font-size:15px;color:var(--mut)"> / {{ m.meta_mensual_usd }}</span></div>
+    <div class="t">ganado este mes (según presupuesto)</div>
+    <div class="bar"><i style="width:{{ [100, (100 * m.facturado_mes_usd / m.meta_mensual_usd)|round|int]|min if m.meta_mensual_usd else 0 }}%"></i></div>
+  </div>
+</div>
+
+<div class="row" style="margin:22px 0 12px" id="tabs">
+  {% for e, etiqueta in [('nuevo','Pendientes'),('postulado','Postulados'),('respondido','Respondidos'),('ganado','Ganados'),('perdido','Perdidos')] %}
+    <button class="btn" data-tab="{{ e }}">{{ etiqueta }} <span class="badge">{{ pipeline[e]|length }}</span></button>
+  {% endfor %}
+  <button class="btn" data-tab="revisar">Para revisar <span class="badge">{{ revisar|length }}</span></button>
+</div>
+
+{% for e in estados %}
+<section data-panel="{{ e }}" hidden>
+  {% for t in pipeline[e] %}{{ tarjeta(t) }}
+  {% else %}
+    <div class="empty">
+      {% if e == 'nuevo' %}Nada pendiente que pase el filtro ahora.<br>Si encontraste una oferta por tu cuenta, cargala en <a href="{{ url_for('agregar_page') }}" style="color:var(--acc)">Agregar</a>.
+      {% else %}Vacío por ahora.{% endif %}
+    </div>
+  {% endfor %}
+</section>
+{% endfor %}
+
+<section data-panel="revisar" hidden>
+  <p class="sub">Quedaron cerca del umbral pero sin killers ni problemas de presupuesto. Vale una mirada rápida.</p>
+  {% for t in revisar %}{{ tarjeta(t) }}
+  {% else %}<div class="empty">Nada cerca del umbral.</div>{% endfor %}
+</section>
+{% endblock %}
+
+{% block js %}
+<script>
+  const tabs = [...document.querySelectorAll('#tabs [data-tab]')];
+  const paneles = [...document.querySelectorAll('[data-panel]')];
+  function ir(nombre){
+    tabs.forEach(b => b.classList.toggle('on', b.dataset.tab === nombre));
+    paneles.forEach(p => p.hidden = p.dataset.panel !== nombre);
+    history.replaceState(null, '', '#' + nombre);
+  }
+  tabs.forEach(b => b.addEventListener('click', () => ir(b.dataset.tab)));
+  const inicial = location.hash.slice(1);
+  ir(tabs.some(b => b.dataset.tab === inicial) ? inicial : 'nuevo');
+</script>
+{% endblock %}

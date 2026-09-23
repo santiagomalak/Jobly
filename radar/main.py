@@ -6,26 +6,27 @@
   python -m radar.main stats          # métricas acumuladas
   python -m radar.main pitch <url>              # regenera el pitch de un ticket guardado
   python -m radar.main marcar <fingerprint> <estado>  # nuevo|postulado|respondido|ganado|perdido
-  python -m radar.main dashboard      # genera y abre el CRM (data/dashboard.html)
+  python -m radar.main ask "<pregunta>" [--max-chars N] [--oferta "<texto>"]  # responde con tu contexto
+  python -m radar.main serve          # CRM web local en http://127.0.0.1:8000
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import os
 import sys
 import webbrowser
 from pathlib import Path
 
-from . import llm, notify
+from . import ask, db, llm, notify
 from .config import discord_webhook, load_config
-from .dashboard import write_dashboard
 from .memory import Memory
 from .models import Ticket
 from .pitch import build_pitch
 from .scoring import score_ticket
 from .sources import collect
-from .store import Store
+from .store import ESTADOS, Store
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,27 +56,30 @@ def cmd_run(args: argparse.Namespace) -> int:
     tickets, errores = collect(_load_sources(cfg), cfg)
     log.info("recolectados %d tickets brutos", len(tickets))
 
+    conocidos = store.known_set()
     nuevos: list[Ticket] = []
     for t in tickets:
-        if store.is_known(t):
+        if t.fingerprint in conocidos:
             continue
+        conocidos.add(t.fingerprint)  # también evita duplicados dentro de la misma corrida
         nuevos.append(t)
     log.info("%d nuevos tras deduplicar", len(nuevos))
 
     aprobados: list[Ticket] = []
+    descartados: list[Ticket] = []
     for t in nuevos:
         score_ticket(t, taxonomy, cfg)
-        if t.verdict == "pass":
-            aprobados.append(t)
-        else:
-            store.save(t)
+        (aprobados if t.verdict == "pass" else descartados).append(t)
 
     aprobados.sort(key=lambda x: x.score, reverse=True)
     aprobados = aprobados[: int(cfg.get("max_tickets_per_run", 12))]
     log.info("%d tickets pasaron el filtro", len(aprobados))
 
+    # --dry no escribe en la base: si escribiera, una prueba local esconde tickets reales
+    # (y con la base compartida de Turso los esconde también en el CRM web).
     webhook = discord_webhook("propuestas")
     enviados = 0
+    guardar: list[tuple[Ticket, bool]] = [(t, False) for t in descartados]
     for t in aprobados:
         build_pitch(t, mem)
         if args.dry:
@@ -85,11 +89,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"motor: {t.pitch_engine} · razones: {'; '.join(t.reasons)}")
             print("-" * 72)
             print(t.pitch)
-            store.save(t, notified=False)
         else:
             ok = notify.send_ticket(webhook, t)
             enviados += int(ok)
-            store.save(t, notified=ok)
+            guardar.append((t, ok))
+    if not args.dry:
+        store.save_many(guardar)
 
     if not args.dry:
         notify.send_summary(
@@ -136,6 +141,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             ok = False
 
     print("\n== Base de datos ==")
+    print(f"  backend: {'Turso (compartida con el CRM web)' if db.remoto_configurado() else 'SQLite local ' + str(cfg['db_path'])}")
     try:
         store = Store(root / cfg["db_path"])
         print(f"  {store.stats()}")
@@ -143,6 +149,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"  ERROR: {exc}")
         ok = False
+
+    print("\n== CRM web ==")
+    print(f"  JOBLY_PASSWORD: {'configurada' if os.environ.get('JOBLY_PASSWORD') else 'FALTA (la app no responde sin ella)'}")
+    print("  Para Vercel también hacen falta TURSO_DATABASE_URL y TURSO_AUTH_TOKEN")
 
     print("\n=> " + ("TODO LISTO" if ok else "HAY COSAS QUE FALTAN (ver arriba)"))
     return 0 if ok else 1
@@ -154,9 +164,6 @@ def cmd_stats(_: argparse.Namespace) -> int:
     print(json.dumps(store.stats(), indent=2, ensure_ascii=False))
     store.close()
     return 0
-
-
-ESTADOS = ("nuevo", "postulado", "respondido", "ganado", "perdido")
 
 
 def _append_log_proyectos(root: Path, row, estado: str) -> None:
@@ -226,15 +233,31 @@ def cmd_pitch(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_dashboard(_: argparse.Namespace) -> int:
+def cmd_ask(args: argparse.Namespace) -> int:
     cfg = load_config()
-    root = Path(cfg["root"])
-    store = Store(root / cfg["db_path"])
-    out_path = root / "data" / "dashboard.html"
-    write_dashboard(store, cfg, out_path)
-    store.close()
-    print(f"CRM generado en {out_path}")
-    webbrowser.open(out_path.resolve().as_uri())
+    mem = Memory(Path(cfg["root"]) / cfg["memory_dir"])
+    res = ask.answer(args.pregunta, mem, max_chars=args.max_chars, oferta=args.oferta or "")
+    print(res.text)
+    nota = f"\n[{res.engine} · {res.chars} caracteres"
+    if args.max_chars:
+        nota += f" de {args.max_chars}"
+    if res.truncated:
+        nota += " · recortada para entrar en el tope"
+    if res.missing:
+        nota += f" · faltan {len(res.missing)} dato(s): completalos antes de enviar"
+    print(nota + "]", file=sys.stderr)
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .web import create_app
+
+    app = create_app()
+    url = f"http://127.0.0.1:{args.port}"
+    print(f"Jobly CRM en {url}  (Ctrl+C para cortar)")
+    if not args.no_browser:
+        webbrowser.open(url)
+    app.run(host="127.0.0.1", port=args.port, debug=False)
     return 0
 
 
@@ -262,7 +285,16 @@ def main() -> int:
     sub.add_parser("doctor", help="diagnóstico de configuración").set_defaults(func=cmd_doctor)
     sub.add_parser("stats", help="métricas").set_defaults(func=cmd_stats)
     sub.add_parser("test-discord", help="prueba el webhook").set_defaults(func=cmd_test_discord)
-    sub.add_parser("dashboard", help="genera y abre el CRM").set_defaults(func=cmd_dashboard)
+    p_ask = sub.add_parser("ask", help="responde una pregunta de postulación con tu contexto")
+    p_ask.add_argument("pregunta")
+    p_ask.add_argument("--max-chars", type=int, default=None, help="tope de caracteres")
+    p_ask.add_argument("--oferta", default="", help="texto de la oferta/empresa para afinar la respuesta")
+    p_ask.set_defaults(func=cmd_ask)
+
+    p_serve = sub.add_parser("serve", help="CRM web local")
+    p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument("--no-browser", action="store_true")
+    p_serve.set_defaults(func=cmd_serve)
 
     p_marcar = sub.add_parser("marcar", help="actualiza el estado de un ticket y lo registra en el log")
     p_marcar.add_argument("fingerprint")

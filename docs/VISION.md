@@ -94,7 +94,7 @@ tecnológicas (web, IA, automatización, software a medida) que está por lanzar
 | Reddit | roto (403) — pendiente pasar a API oficial OAuth |
 | HN "seeking freelancer" | funciona (arreglado 2026-09-22) |
 | Remotive | funciona (API pública, uso personal permitido) |
-| **Google Sheets/Excel** | **en construcción** — Santiago carga leads a mano o desde donde sea, el radar solo trae descripción + link y los puntúa igual que todo lo demás |
+| **Google Sheets/Excel** | **funciona** — fuente `sheet` (CSV publicado) y, en el CRM web, "Agregar": una oferta suelta o filas pegadas desde la planilla. Se puntúan igual que todo lo demás |
 | Upwork | muerto (RSS descontinuado 20/08/2024) — solo queda su API oficial (OAuth, requiere approval) |
 | EducaciónIT Empleos | sin API/RSS. Útil para el objetivo de "laburo fijo", no para tickets de 1-3 días |
 | Get On Board, Dice, Indeed, Glassdoor | sin camino automatizable legítimo, o mal fit de negocio |
@@ -102,12 +102,11 @@ tecnológicas (web, IA, automatización, software a medida) que está por lanzar
 
 ## Roadmap de infraestructura (fases)
 
-1. **Fase 1 (ahora):** todo corre gratis. GitHub Actions cron para el motor (scoring +
-   notificación), bot de Discord vía comandos de barra (`/pregunta`, `/postular`, `/ticket`)
-   sin servidor dedicado — Discord permite manejar slash commands vía un endpoint HTTP, que
-   encaja bien con funciones serverless (Vercel es viable para ESTA capa específicamente).
-   Requiere migrar la DB de SQLite local a algo accesible desde serverless (recomendado:
-   Turso — compatible con SQLite, cambio de código mínimo, tier gratis generoso).
+1. **Fase 1 (hecha en código el 23/09, falta desplegar — `docs/DEPLOY.md`):** todo gratis.
+   GitHub Actions cron para el motor, **CRM web en Vercel** (pipeline, detalle, asistente
+   `Preguntar`, `Agregar`/importar planilla) y base compartida en Turso (`radar/db.py`, por HTTP).
+   Pendiente de esta fase: bot de Discord con comandos de barra (`/pregunta`, `/ticket`) — Discord
+   los entrega por HTTP, así que encaja en el mismo Vercel sin servidor dedicado.
 2. **Fase 2:** VPS (~USD 6-7/mes) para tener el bot escuchando 24/7 sin depender de
    comandos de barra únicamente, una vez que el resto ya esté probado y funcionando.
 3. **Fase 3+ (futuro, no ahora):** IA de voz en Discord para ideación de contenido de

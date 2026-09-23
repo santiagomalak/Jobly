@@ -56,12 +56,24 @@ python -m radar.main run
 | Comando | Qué hace |
 |---|---|
 | `python -m radar.main run` | Corrida completa: recolecta, puntúa, redacta y notifica |
-| `python -m radar.main run --dry` | Igual pero imprime en consola, no toca Discord |
+| `python -m radar.main run --dry` | Igual pero imprime en consola; no toca Discord ni la base |
+| `python -m radar.main serve` | CRM web local: pipeline, detalle de cada oferta, asistente, carga manual |
+| `python -m radar.main ask "<pregunta>" --max-chars 300` | Responde una pregunta de formulario con tu contexto real |
+| `python -m radar.main marcar <fingerprint> <estado>` | Cambia el estado de un ticket (también se hace desde el CRM) |
+| `python -m radar.main pitch <url>` | Regenera el pitch de un ticket guardado |
 | `python -m radar.main doctor` | Diagnóstico de configuración |
 | `python -m radar.main stats` | Métricas acumuladas |
 | `python -m radar.main test-discord` | Prueba el webhook |
-| `python scripts/selftest.py` | Prueba el motor con tickets de ejemplo (sin internet) |
+| `python scripts/selftest.py` | Scoring, memoria y pitch (regresiones del motor) |
+| `python scripts/selftest_web.py` | CRM web, capa Turso y store (sin internet) |
 | `python scripts/ingest_one.py --interactivo` | Evalúa un ticket que viste a mano y genera el pitch |
+
+## CRM web y despliegue
+
+`radar/web.py` (Flask) es el CRM: pipeline por estado, KPI semanal, detalle de cada oferta con
+pitch editable, el asistente **Preguntar** y **Agregar** (una oferta suelta o filas pegadas desde
+Excel/Sheets). Requiere login (`JOBLY_PASSWORD`). Para tenerlo online en Vercel con base
+compartida en Turso: **`docs/DEPLOY.md`**.
 
 ---
 

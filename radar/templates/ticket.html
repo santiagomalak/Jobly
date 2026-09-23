@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ t['title'][:40] }}{% endblock %}
+
+{% block body %}
+<a href="{{ url_for('index') }}" style="color:var(--mut);text-decoration:none;font-size:14px">← Pipeline</a>
+<h1 style="margin-top:12px">{{ t['title'] }}</h1>
+<div class="row" style="margin-bottom:14px">
+  <span class="badge s">score {{ t['score'] }}</span>
+  {% if t['module'] %}<span class="badge">{{ t['module'] }}</span>{% endif %}
+  <span class="badge">{{ t['source'] }}</span>
+  {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }} detectado</span>{% else %}<span class="badge">sin presupuesto visible</span>{% endif %}
+  {% if d.get('published') %}<span class="badge">publicado {{ d['published'][:10] }}</span>{% endif %}
+  {% if t['verdict'] != 'pass' %}<span class="badge w">no pasó el filtro</span>{% endif %}
+</div>
+
+<div class="row" style="margin-bottom:6px">
+  <a class="btn primary" href="{{ t['url']|safe_url }}" target="_blank" rel="noopener noreferrer">Abrir postulación ↗</a>
+  <a class="btn" href="{{ url_for('ask_page', fp=t['fingerprint']) }}">Responder preguntas del formulario</a>
+</div>
+
+<h2>Estado</h2>
+<div class="row" id="estados">
+  {% for e in estados %}<button class="btn {% if t['estado'] == e %}on{% endif %}" data-estado="{{ e }}">{{ e|capitalize }}</button>{% endfor %}
+</div>
+
+<h2>Pitch <span class="badge" id="motor">{{ t['engine'] or 'sin generar' }}</span></h2>
+<div class="card">
+  <textarea id="pitch" rows="12" placeholder="Todavía no hay pitch para este ticket">{{ t['pitch'] or '' }}</textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="btn primary" id="copiar">Copiar</button>
+    <button class="btn" id="regen">{% if t['pitch'] %}Regenerar{% else %}Generar pitch{% endif %}</button>
+    <span class="sub" style="margin:0">Editalo antes de copiar: es un borrador, el envío lo decidís vos.</span>
+  </div>
+</div>
+
+<h2>La oferta completa</h2>
+<div class="card" style="white-space:pre-wrap;word-break:break-word">{{ d.get('description') or '(sin descripción)' }}</div>
+
+{% if d.get('reasons') %}
+<h2>Por qué puntuó así</h2>
+<div class="card"><ul style="margin:0;padding-left:18px">{% for r in d['reasons'] %}<li>{{ r }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<h2>Notas</h2>
+<div class="card">
+  <textarea id="notas" rows="4" placeholder="Contacto, fecha de seguimiento, qué respondieron…">{{ t['notas'] or '' }}</textarea>
+  <div style="margin-top:10px"><button class="btn" id="guardar-notas">Guardar notas</button></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  const FP = {{ t['fingerprint']|tojson }};
+  document.getElementById('copiar').onclick = () => copiar(document.getElementById('pitch').value);
+
+  document.querySelectorAll('[data-estado]').forEach(b => b.onclick = async () => {
+    try {
+      await api('/api/marcar', {fingerprint: FP, estado: b.dataset.estado});
+      document.querySelectorAll('[data-estado]').forEach(x => x.classList.toggle('on', x === b));
+      toast('Estado: ' + b.dataset.estado);
+    } catch (e) { toast(e.message); }
+  });
+
+  document.getElementById('regen').onclick = async (ev) => {
+    const btn = ev.currentTarget; btn.disabled = true; const antes = btn.textContent; btn.textContent = 'Generando…';
+    try {
+      const r = await api('/api/pitch', {fingerprint: FP});
+      document.getElementById('pitch').value = r.pitch;
+      document.getElementById('motor').textContent = r.engine;
+      btn.textContent = 'Regenerar';
+    } catch (e) { toast(e.message); btn.textContent = antes; }
+    btn.disabled = false;
+  };
+
+  document.getElementById('guardar-notas').onclick = async () => {
+    try { await api('/api/notas', {fingerprint: FP, notas: document.getElementById('notas').value}); toast('Notas guardadas'); }
+    catch (e) { toast(e.message); }
+  };
+</script>
+{% endblock %}

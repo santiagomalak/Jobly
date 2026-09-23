@@ -114,6 +114,17 @@ def fetch_remotive(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
     data = r.json()
     tickets: list[Ticket] = []
     for job in data.get("jobs", []):
+        salary = (job.get("salary") or "").strip()
+        tags = [str(t) for t in job.get("tags", [])]
+        # Solo una tarifa por hora es un precio de trabajo; "$90k - $105k" es un sueldo anual
+        # y en raw_budget se leería como presupuesto de proyecto.
+        es_tarifa = bool(re.search(r"/\s?(hr|hour)|per hour|hourly", salary, re.I))
+        if salary and not es_tarifa:
+            tags.append(f"salario:{salary}")
+        if job.get("job_type"):
+            tags.append(f"tipo:{job['job_type']}")
+        if job.get("candidate_required_location"):
+            tags.append(f"ubicacion:{job['candidate_required_location']}")
         tickets.append(
             Ticket(
                 source=name,
@@ -121,8 +132,8 @@ def fetch_remotive(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
                 url=job.get("url", ""),
                 description=_clean(job.get("description", ""))[:4000],
                 published=job.get("publication_date", ""),
-                raw_budget=job.get("salary") or "",
-                tags=[str(t) for t in job.get("tags", [])],
+                raw_budget=salary if es_tarifa else "",
+                tags=tags,
             )
         )
     return tickets
@@ -173,14 +184,25 @@ def fetch_hn_freelance(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]
     search = "https://hn.algolia.com/api/v1/search_by_date"
     r = requests.get(
         search,
-        params={"tags": "comment", "query": '"seeking freelancer"'},
+        params={"tags": "comment", "query": '"seeking freelancer"', "hitsPerPage": 100},
         timeout=int(cfg.get("http_timeout", 20)),
     )
     r.raise_for_status()
+    limite = datetime.now(timezone.utc) - timedelta(days=int(cfg.get("hn_lookback_days", 35)))
     tickets: list[Ticket] = []
-    for hit in r.json().get("hits", [])[:60]:
+    for hit in r.json().get("hits", []):
         body = _clean(hit.get("comment_text", ""))
         if len(body) < 120:
+            continue
+        # La frase exacta también aparece en comentarios sueltos que hablan del hilo;
+        # los avisos reales de clientes arrancan con "SEEKING FREELANCER |".
+        if "seeking freelancer" not in body[:60].lower():
+            continue
+        try:
+            creado = datetime.fromisoformat(hit.get("created_at", "").replace("Z", "+00:00"))
+        except ValueError:
+            creado = None
+        if creado and creado < limite:
             continue
         tickets.append(
             Ticket(
@@ -215,16 +237,22 @@ def _pick_column(headers: list[str], names: tuple[str, ...]) -> str | None:
 
 def fetch_sheet(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
     """Lee un Google Sheet publicado como CSV (Archivo > Compartir > Publicar en la
-    web > CSV, o un Excel exportado a CSV y hosteado en cualquier URL pública).
-
-    Columnas esperadas, en cualquier orden, español o inglés: title/titulo (opcional,
-    se infiere de la descripción si falta), url/link (obligatoria), description/
-    descripcion, budget/presupuesto (opcional). No filtra por antigüedad: es carga
-    manual, se asume que lo que está en la planilla es relevante.
-    """
+    web > CSV, o un Excel exportado a CSV y hosteado en cualquier URL pública)."""
     r = requests.get(url, timeout=int(cfg.get("http_timeout", 20)))
     r.raise_for_status()
-    reader = csv.DictReader(io.StringIO(r.text))
+    return parse_sheet_csv(r.text, name)
+
+
+def parse_sheet_csv(texto: str, name: str) -> list[Ticket]:
+    """CSV -> tickets. Columnas en cualquier orden, español o inglés: title/titulo (opcional,
+    se infiere de la descripción), url/link (obligatoria), description/descripcion,
+    budget/presupuesto (opcional). No filtra por antigüedad: es carga manual."""
+    texto = texto.lstrip("﻿")
+    try:  # pegar celdas desde Sheets/Excel da TSV; un Excel en español exporta con ";"
+        dialecto = csv.Sniffer().sniff(texto[:3000], delimiters=",;\t")
+    except csv.Error:
+        dialecto = csv.excel
+    reader = csv.DictReader(io.StringIO(texto), dialect=dialecto)
     if not reader.fieldnames:
         raise RuntimeError("el CSV no tiene encabezados")
 

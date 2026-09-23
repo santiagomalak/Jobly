@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Entrar{% endblock %}
+{% block body %}
+<div style="max-width:360px;margin:12vh auto 0">
+  <h1 style="text-align:center;font-size:28px">Job<span style="color:var(--acc)">ly</span></h1>
+  <p class="sub" style="text-align:center">Tu CRM de búsqueda de laburo</p>
+  <form method="post" class="card">
+    <label for="password" style="margin-top:0">Contraseña</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+    {% if error %}<p class="err">{{ error }}</p>{% endif %}
+    <button class="btn primary" style="width:100%;margin-top:14px">Entrar</button>
+  </form>
+</div>
+{% endblock %}

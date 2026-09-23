@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Agregar{% endblock %}
+
+{% block body %}
+<h1>Agregar ofertas</h1>
+<div class="sub">Las fuentes públicas traen poco freelance. Lo que encontrás vos navegando (Workana, LinkedIn, lo que sea) entra acá: se puntúa, se redacta el pitch y queda trackeado.</div>
+
+<h2 style="margin-top:6px">Una oferta</h2>
+<div class="card">
+  <label for="url" style="margin-top:0">Link a la oferta</label>
+  <input id="url" type="url" inputmode="url" placeholder="https://…">
+  <label for="title">Título (opcional)</label>
+  <input id="title" type="text" placeholder="Si lo dejás vacío se usa el inicio de la descripción">
+  <label for="description">Descripción de la oferta (pegá el texto)</label>
+  <textarea id="description" rows="7" placeholder="Copiá y pegá lo que dice la oferta"></textarea>
+  <div class="row">
+    <div style="flex:1 1 150px"><label for="budget">Presupuesto (opcional)</label><input id="budget" type="text" placeholder="USD 300"></div>
+    <div style="flex:1 1 170px"><label for="modulo">Tipo de trabajo</label>
+      <select id="modulo"><option value="auto">Detectar solo</option>{% for m in modulos %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+  </div>
+  <div class="row" style="margin-top:14px"><button class="btn primary" id="agregar">Agregar y generar pitch</button><span class="sub" id="estado1" style="margin:0"></span></div>
+</div>
+
+<h2>Importar planilla (Excel / Google Sheets)</h2>
+<div class="card">
+  <div class="sub">Copiá las filas desde tu planilla y pegalas acá, con la fila de encabezados. Columnas: <b>url</b> (obligatoria), <b>title</b>, <b>description</b>, <b>budget</b> (en español también: link, titulo, descripcion, presupuesto). Hasta 500 filas. Se puntúan todas; las que pasan el filtro aparecen en Pendientes.</div>
+  <textarea id="csv" rows="7" placeholder="url&#9;title&#9;description&#9;budget"></textarea>
+  <div class="row" style="margin-top:12px"><button class="btn primary" id="importar">Importar</button><span class="sub" id="estado2" style="margin:0"></span></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  const $ = id => document.getElementById(id);
+  $('agregar').onclick = async () => {
+    $('agregar').disabled = true; $('estado1').textContent = 'Puntuando y redactando el pitch…';
+    try {
+      const r = await api('/api/ticket', {url: $('url').value, title: $('title').value,
+        description: $('description').value, budget: $('budget').value, modulo: $('modulo').value});
+      location.href = '/ticket/' + r.fingerprint;
+    } catch (e) {
+      $('estado1').textContent = e.message;
+      if (e.data && e.data.necesita_modulo) $('modulo').focus();
+    }
+    $('agregar').disabled = false;
+  };
+  $('importar').onclick = async () => {
+    $('importar').disabled = true; $('estado2').textContent = 'Importando…';
+    try {
+      const r = await api('/api/importar', {csv: $('csv').value});
+      $('estado2').textContent = r.filas + ' filas: ' + r.nuevos + ' nuevas, ' + r.aprobados + ' pasaron el filtro.';
+      if (r.aprobados) setTimeout(() => location.href = '/', 1500);
+    } catch (e) { $('estado2').textContent = e.message; }
+    $('importar').disabled = false;
+  };
+</script>
+{% endblock %}

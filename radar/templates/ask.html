@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Preguntar{% endblock %}
+
+{% block body %}
+<h1>Preguntar</h1>
+<div class="sub">Pegá la pregunta del formulario. Responde con tu contexto real (CV, proyectos, stack); si falta un dato, lo marca en vez de inventarlo.</div>
+
+<div class="card">
+  <label for="pregunta" style="margin-top:0">Pregunta</label>
+  <textarea id="pregunta" rows="4" placeholder="Ej.: ¿Con qué frameworks tenés experiencia? / Why do you want to work with us?" autofocus></textarea>
+
+  <div class="row" style="margin-top:6px">
+    <div style="flex:0 0 190px"><label for="tope">Máximo de caracteres</label>
+      <input id="tope" type="number" inputmode="numeric" min="20" max="5000" placeholder="sin límite"></div>
+  </div>
+
+  <label for="oferta">Datos de la oferta o empresa (opcional, mejora la respuesta)</label>
+  <textarea id="oferta" rows="3" placeholder="Pegá el texto de la oferta o qué hace la empresa">{{ oferta }}</textarea>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn primary" id="responder">Responder</button>
+    <span class="sub" id="estado" style="margin:0"></span>
+  </div>
+</div>
+
+<div class="card" id="resultado" style="margin-top:14px" hidden>
+  <div class="row" style="margin-bottom:8px"><span class="badge" id="meta"></span><span class="badge w" id="aviso" hidden></span></div>
+  <div id="texto" style="white-space:pre-wrap;word-break:break-word;font-size:16px"></div>
+  <div class="sub" style="margin:12px 0 0">Antes de enviar, verificá niveles, fechas y cifras: la IA puede equivocarse aunque tenga tu contexto.</div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn primary" id="copiar">Copiar respuesta</button>
+    <button class="btn" id="otra">Otra versión</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  const $ = id => document.getElementById(id);
+  async function responder(){
+    const pregunta = $('pregunta').value.trim();
+    if(!pregunta){ toast('Escribí la pregunta'); return; }
+    $('responder').disabled = true; $('estado').textContent = 'Pensando…';
+    try {
+      const r = await api('/api/ask', {pregunta, max_chars: $('tope').value || null, oferta: $('oferta').value});
+      $('texto').textContent = r.text;
+      $('meta').textContent = r.engine + ' · ' + r.chars + ' caracteres' + ($('tope').value ? ' de ' + $('tope').value : '');
+      const avisos = [];
+      if (r.truncated) avisos.push('recortada para entrar en el tope');
+      if (r.missing.length) avisos.push('completá ' + r.missing.length + ' dato(s) marcados [COMPLETAR] antes de enviar');
+      if (r.engine === 'plantilla') avisos.push('IA no disponible');
+      $('aviso').hidden = !avisos.length; $('aviso').textContent = avisos.join(' · ');
+      $('resultado').hidden = false; $('estado').textContent = '';
+    } catch (e) { $('estado').textContent = e.message; }
+    $('responder').disabled = false;
+  }
+  $('responder').onclick = responder;
+  $('otra').onclick = responder;
+  $('copiar').onclick = () => copiar($('texto').textContent);
+</script>
+{% endblock %}
