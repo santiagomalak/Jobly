@@ -97,5 +97,9 @@ class Store:
         )
         return cur.fetchone()
 
+    def all_tickets(self) -> list[sqlite3.Row]:
+        cur = self.conn.execute("SELECT * FROM tickets ORDER BY seen_at DESC")
+        return cur.fetchall()
+
     def close(self) -> None:
         self.conn.close()

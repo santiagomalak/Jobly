@@ -6,6 +6,7 @@
   python -m radar.main stats          # métricas acumuladas
   python -m radar.main pitch <url>              # regenera el pitch de un ticket guardado
   python -m radar.main marcar <fingerprint> <estado>  # nuevo|postulado|respondido|ganado|perdido
+  python -m radar.main dashboard      # genera y abre el CRM (data/dashboard.html)
 """
 from __future__ import annotations
 
@@ -13,10 +14,12 @@ import argparse
 import json
 import logging
 import sys
+import webbrowser
 from pathlib import Path
 
 from . import llm, notify
 from .config import discord_webhook, load_config
+from .dashboard import write_dashboard
 from .memory import Memory
 from .models import Ticket
 from .pitch import build_pitch
@@ -223,6 +226,18 @@ def cmd_pitch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard(_: argparse.Namespace) -> int:
+    cfg = load_config()
+    root = Path(cfg["root"])
+    store = Store(root / cfg["db_path"])
+    out_path = root / "data" / "dashboard.html"
+    write_dashboard(store, cfg, out_path)
+    store.close()
+    print(f"CRM generado en {out_path}")
+    webbrowser.open(out_path.resolve().as_uri())
+    return 0
+
+
 def cmd_test_discord(_: argparse.Namespace) -> int:
     webhook = discord_webhook("propuestas")
     if not webhook:
@@ -247,6 +262,7 @@ def main() -> int:
     sub.add_parser("doctor", help="diagnóstico de configuración").set_defaults(func=cmd_doctor)
     sub.add_parser("stats", help="métricas").set_defaults(func=cmd_stats)
     sub.add_parser("test-discord", help="prueba el webhook").set_defaults(func=cmd_test_discord)
+    sub.add_parser("dashboard", help="genera y abre el CRM").set_defaults(func=cmd_dashboard)
 
     p_marcar = sub.add_parser("marcar", help="actualiza el estado de un ticket y lo registra en el log")
     p_marcar.add_argument("fingerprint")
