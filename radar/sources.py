@@ -275,6 +275,58 @@ def fetch_jobicy(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
 
 
 # --------------------------------------------------------------------------
+# Working Nomads (API pública, sin auth). No soporta búsqueda por keyword en el
+# endpoint, así que filtramos local con `queries` de sources.yaml (mismo criterio
+# que Himalayas/Jobicy) para no traer todas las categorías del sitio.
+# --------------------------------------------------------------------------
+def fetch_workingnomads(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    src = cfg.get("_src", {})
+    palabras = [str(q).lower() for q in (src.get("queries") or [])]
+    r = requests.get(
+        url or "https://www.workingnomads.com/api/exposed_jobs/",
+        headers={"User-Agent": cfg.get("user_agent")},
+        timeout=int(cfg.get("http_timeout", 20)),
+    )
+    r.raise_for_status()
+    data = r.json()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=int(cfg.get("lookback_hours", 36)))
+    tickets: list[Ticket] = []
+    for job in data:
+        if not isinstance(job, dict):
+            continue
+        titulo = _clean(job.get("title", ""))
+        desc = _clean(job.get("description", ""))
+        if palabras and not any(p in (titulo + " " + desc).lower() for p in palabras):
+            continue
+        pub = job.get("pub_date") or job.get("pubDate") or ""
+        try:
+            creado = datetime.fromisoformat(str(pub).replace("Z", "+00:00"))
+            if creado < cutoff:
+                continue
+        except ValueError:
+            pass  # sin fecha parseable, no descartamos (mismo criterio que _is_fresh)
+        tags = [f"categoria:{job['category_name']}"] if job.get("category_name") else []
+        crudos = job.get("tags") or []
+        if isinstance(crudos, str):
+            crudos = crudos.split(",")
+        tags += [t.strip() for t in crudos if str(t).strip()]
+        clave = job.get("url") or str(job.get("id", ""))
+        if not clave:
+            continue
+        tickets.append(
+            Ticket(
+                source=name,
+                title=titulo,
+                url=clave,
+                description=desc[:4000],
+                published=str(pub),
+                tags=tags,
+            )
+        )
+    return tickets
+
+
+# --------------------------------------------------------------------------
 # Reddit (JSON público, sin credenciales)
 # --------------------------------------------------------------------------
 _reddit_token: dict[str, Any] = {"valor": "", "expira": 0.0}
@@ -458,6 +510,7 @@ FETCHERS: dict[str, Callable[..., list[Ticket]]] = {
     "remotive": fetch_remotive,
     "himalayas": fetch_himalayas,
     "jobicy": fetch_jobicy,
+    "workingnomads": fetch_workingnomads,
 }
 
 

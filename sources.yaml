@@ -91,3 +91,11 @@ sources:
       - {geo: latam}
       - {geo: anywhere, tag: automation}
       - {geo: anywhere, tag: data}
+
+  # ---------- Working Nomads: API pública, sin auth. No tiene búsqueda por keyword
+  # en el endpoint, así que filtramos local con estas palabras (case-insensitive,
+  # busca en título+descripción). Ajustá esta lista como la de Himalayas.
+  - name: workingnomads
+    type: workingnomads
+    enabled: true
+    queries: [python, automation, n8n, "data engineer", "data analyst", dbt, "power bi", react, "web scraping", chatbot, "ai agent"]
