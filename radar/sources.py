@@ -41,14 +41,32 @@ def _is_fresh(entry: Any, hours: int) -> bool:
 # --------------------------------------------------------------------------
 # RSS genérico (Upwork, WeWorkRemotely, Reddit, lo que sea)
 # --------------------------------------------------------------------------
+# Foros de "jobs" tipo n8n/Make community mezclan clientes pidiendo ("[HIRING]",
+# "Gesucht: ...") con freelancers ofreciéndose ("[For Hire]", "Busco proyectos",
+# "Open to Remote Opportunities") — esto último es ruido/competencia, no una
+# oferta real. Mismo problema que "SEEKING WORK" en HN, mismo criterio: descartar
+# por patrón de auto-promoción antes de que llegue al scoring.
+_AUTOPROMO_RSS = re.compile(
+    r"^\[?for\s*hire\]?|\bopen to (remote )?(work|opportunities)\b"
+    r"|\bavailable\s+for\s+(ai |automation|hire|freelance|projects?)\b"
+    r"|\bbusco\s+(proyectos?|trabajo|clientes?|equipo)\b|\bofrezco\b",
+    re.I,
+)
+_FOROS_AUTOPROMO = ("community.n8n.io", "community.make.com")
+
+
 def fetch_rss(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
     tickets: list[Ticket] = []
     feed = feedparser.parse(url, agent=cfg.get("user_agent"))
     if getattr(feed, "bozo", 0) and not feed.entries:
         raise RuntimeError(f"feed ilegible: {getattr(feed, 'bozo_exception', '')}")
+    filtrar_autopromo = any(f in url for f in _FOROS_AUTOPROMO)
 
     for entry in feed.entries:
         if not _is_fresh(entry, int(cfg.get("lookback_hours", 36))):
+            continue
+        titulo_crudo = getattr(entry, "title", "")
+        if filtrar_autopromo and _AUTOPROMO_RSS.search(titulo_crudo):
             continue
         desc = _clean(getattr(entry, "summary", "") or getattr(entry, "description", ""))
         budget = ""

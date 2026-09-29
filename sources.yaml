@@ -21,6 +21,18 @@ sources:
     enabled: true
     url: "https://weworkremotely.com/categories/remote-contract-jobs.rss"
 
+  # ---------- Foros oficiales de n8n/Make: RSS pública de su categoría de empleos.
+  # Nicho real (SMBs pidiendo automatización + IA), no bolsa genérica. Make mezcla
+  # pedidos de trabajo con preguntas de soporte ("...SOLVED"); el scoring ya filtra eso. ----------
+  - name: n8n-community-jobs
+    type: rss
+    enabled: true
+    url: "https://community.n8n.io/c/jobs/13.rss"
+  - name: make-community-hire
+    type: rss
+    enabled: true
+    url: "https://community.make.com/c/hire-a-pro/hire-help/74.rss"
+
   # ---------- Reddit (JSON público, sin credenciales) ----------
   - name: reddit-forhire
     type: reddit
