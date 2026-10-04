@@ -13,9 +13,13 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-os.environ.pop("TURSO_DATABASE_URL", None)
-os.environ.pop("TURSO_AUTH_TOKEN", None)
-os.environ.pop("VERCEL", None)
+#  pop() no alcanza: radar.config hace load_dotenv() al importarse (recién cuando se
+#  importa radar.web más abajo) y, como no sobreescribe variables ya presentes, una
+#  variable *ausente* la repone desde el .env real — reconectando este test a la Turso
+#  de producción sin que nada lo avise. Dejarlas en "" sí cuenta como "presente".
+os.environ["TURSO_DATABASE_URL"] = ""
+os.environ["TURSO_AUTH_TOKEN"] = ""
+os.environ["VERCEL"] = ""
 
 from radar import db, llm  # noqa: E402
 from radar.models import Ticket  # noqa: E402
