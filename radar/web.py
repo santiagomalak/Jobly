@@ -340,4 +340,38 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             aprobados=sum(1 for t, _ in nuevos if t.verdict == "pass"),
         )
 
+    @app.post("/api/postulaciones/importar")
+    def api_postulaciones_importar():
+        """Pega un CSV de postulaciones que YA mandaste (vos, a mano, en cualquier plataforma):
+        url (obligatoria), title, description (se guarda como nota de la postulación), budget.
+        Si la url ya está en el pipeline, la marca 'postulado'; si no existe, la crea y la marca
+        de una. Es constancia, no scoring: no hace falta que pase ningún filtro."""
+        datos = request.get_json(silent=True) or {}
+        try:
+            filas = parse_sheet_csv(str(datos.get("csv", "")), "manual-postulado")
+        except RuntimeError as exc:
+            return jsonify(error=str(exc)), 400
+        if len(filas) > _MAX_IMPORT:
+            return jsonify(error=f"Máximo {_MAX_IMPORT} filas por importación"), 400
+        s, mem, tax = store(), memoria(), memoria().taxonomia()
+        emparejados, creados = 0, 0
+        for t in filas:
+            if not t.url.lower().startswith(("http://", "https://")):
+                continue
+            previo = s.get_by_url(t.url)
+            if previo:
+                s.marcar(previo["fingerprint"], "postulado")
+                if t.description:
+                    s.set_notas(previo["fingerprint"], t.description)
+                emparejados += 1
+                continue
+            score_ticket(t, tax, cfg)
+            t.verdict = "pass"
+            s.save(t)
+            s.marcar(t.fingerprint, "postulado")
+            if t.description:
+                s.set_notas(t.fingerprint, t.description)
+            creados += 1
+        return jsonify(ok=True, filas=len(filas), emparejados=emparejados, creados=creados)
+
     return app

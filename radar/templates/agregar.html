@@ -34,6 +34,17 @@
   <textarea id="csv" rows="7" placeholder="url&#9;title&#9;description&#9;budget"></textarea>
   <div class="row" style="margin-top:12px"><button class="btn primary" id="importar">Importar</button><span class="sub" id="estado2" style="margin:0"></span></div>
 </div>
+
+<h2>Registrar postulaciones ya enviadas</h2>
+<div class="card">
+  <div class="sub">Para lo que postulaste vos a mano (acá no pasó por el radar, o postulaste
+    por fuera): pegá una fila por postulación. Columnas: <b>url</b> (obligatoria), <b>title</b>,
+    <b>description</b> (se guarda como nota: fecha, cotización, lo que quieras recordar),
+    <b>budget</b>. Si la url ya está en el pipeline la marca "postulado"; si no, la crea y la
+    marca de una. No se puntúa ni se filtra: es constancia.</div>
+  <textarea id="csvPostulaciones" rows="7" placeholder="url&#9;title&#9;description&#9;budget"></textarea>
+  <div class="row" style="margin-top:12px"><button class="btn primary" id="importarPostulaciones">Registrar</button><span class="sub" id="estado3" style="margin:0"></span></div>
+</div>
 {% endblock %}
 
 {% block js %}
@@ -68,6 +79,14 @@
       if (r.aprobados) setTimeout(() => location.href = '/', 1500);
     } catch (e) { $('estado2').textContent = e.message; }
     $('importar').disabled = false;
+  };
+  $('importarPostulaciones').onclick = async () => {
+    $('importarPostulaciones').disabled = true; $('estado3').textContent = 'Registrando…';
+    try {
+      const r = await api('/api/postulaciones/importar', {csv: $('csvPostulaciones').value});
+      $('estado3').textContent = r.filas + ' filas: ' + r.emparejados + ' ya estaban en el pipeline, ' + r.creados + ' se crearon nuevas. Todas marcadas "postulado".';
+    } catch (e) { $('estado3').textContent = e.message; }
+    $('importarPostulaciones').disabled = false;
   };
 </script>
 {% endblock %}
