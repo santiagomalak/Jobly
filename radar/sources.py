@@ -49,7 +49,12 @@ def _is_fresh(entry: Any, hours: int) -> bool:
 _AUTOPROMO_RSS = re.compile(
     r"^\[?for\s*hire\]?|\bopen to (remote )?(work|opportunities)\b"
     r"|\bavailable\s+for\s+(ai |automation|hire|freelance|projects?)\b"
-    r"|\bbusco\s+(proyectos?|trabajo|clientes?|equipo)\b|\bofrezco\b",
+    r"|\bbusco\s+(proyectos?|trabajo|clientes?|equipo)\b|\bofrezco\b"
+    # Respuestas de otros freelancers dentro de un hilo (no el pedido original del
+    # cliente): el título suele ser inocuo ("N8n Builder") y la pista está en el
+    # cuerpo — alguien más contestando "acá estoy yo" con su tarifa y portfolio.
+    r"|\bcontinuing the discussion from\b|\bmy portfolio\b|\bportfolio:\s*https?://"
+    r"|\bpricing:\s*\$|\$\d+[-–]\d+\s*/\s*hour\b",
     re.I,
 )
 _FOROS_AUTOPROMO = ("community.n8n.io", "community.make.com")
@@ -66,9 +71,9 @@ def fetch_rss(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
         if not _is_fresh(entry, int(cfg.get("lookback_hours", 36))):
             continue
         titulo_crudo = getattr(entry, "title", "")
-        if filtrar_autopromo and _AUTOPROMO_RSS.search(titulo_crudo):
-            continue
         desc = _clean(getattr(entry, "summary", "") or getattr(entry, "description", ""))
+        if filtrar_autopromo and _AUTOPROMO_RSS.search(f"{titulo_crudo}\n{desc}"):
+            continue
         budget = ""
         m = re.search(r"(Budget|Hourly Range|Fixed[- ]price)[:\s]*([^<\n]{0,60})", desc, re.I)
         if m:
