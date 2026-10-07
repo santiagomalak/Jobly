@@ -8,3 +8,12 @@ santiago-data/
 env.txt
 *.env.txt
 .claude/settings.local.json
+
+# Claude Code / agentes IA (contexto local, no va al repo)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/
+claude-commands/
+prompts/
+docs/PROMPT_BOOTSTRAP.md
