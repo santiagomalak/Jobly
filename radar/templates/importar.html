@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Importar{% endblock %}
+
+{% block body %}
+<h1>Importar vacantes</h1>
+<div class="sub">CSV o TSV (el formato del prompt de Claude in Chrome o cualquier planilla). Se lee en tu navegador, mapeás columnas, ves una vista previa y se carga en tandas de {{ max_chunk }}. Duplicados por URL y por empresa + título. Las filas con error se reportan sin frenar el resto, y cada lote se puede deshacer.</div>
+
+<div class="card" id="zona" style="border-style:dashed;text-align:center;padding:26px 16px;cursor:pointer">
+  <div style="font-weight:650">Arrastrá el archivo acá o tocá para elegirlo</div>
+  <div class="sub" style="margin:6px 0 0">.csv o .tsv · separador coma, punto y coma o tab · UTF-8 con o sin BOM · hasta {{ max_filas }} filas</div>
+  <input id="archivo" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values" hidden>
+</div>
+<details style="margin-top:10px"><summary class="sub" style="cursor:pointer;margin:0">…o pegá el texto</summary>
+  <textarea id="pegado" rows="6" placeholder="titulo,empresa_o_cliente,url,…" style="margin-top:8px"></textarea>
+  <button class="btn" id="leer-pegado" style="margin-top:8px">Leer</button>
+</details>
+
+<section id="paso2" hidden>
+  <h2>Mapeo de columnas</h2>
+  <div class="card">
+    <div class="row">
+      <div style="flex:1 1 160px"><label for="fuente" style="margin-top:0">Fuente (recuerda el mapeo)</label><input id="fuente" type="text" placeholder="workana, upwork, linkedin…"></div>
+      <div style="flex:1 1 160px"><label for="politica" style="margin-top:0">Si ya existe</label>
+        <select id="politica"><option value="ignorar">Ignorar el duplicado</option><option value="actualizar">Actualizar datos</option></select></div>
+    </div>
+    <div id="mapeo" class="grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))"></div>
+  </div>
+  <h2>Vista previa <span class="sub" id="resumen" style="font-weight:400"></span></h2>
+  <div class="card" style="overflow-x:auto;padding:0"><table id="preview" style="border-collapse:collapse;width:100%;font-size:13px"></table></div>
+  <div class="row" style="margin-top:14px">
+    <button class="btn primary" id="importar">Importar</button>
+    <span class="sub" id="progreso" style="margin:0"></span>
+  </div>
+  <div id="reporte" style="margin-top:12px"></div>
+</section>
+
+<h2>Historial</h2>
+<div class="card" style="padding:6px 14px">
+  {% for h in historial %}
+  <div class="row" style="justify-content:space-between;padding:9px 0;{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
+    <span><b>#{{ h['id'] }} {{ h['fuente'] }}</b> <span class="sub" style="margin:0">· {{ (h['created_at'] or '')[:16] }} UTC · {{ h['politica'] }}</span></span>
+    <span class="row" style="gap:6px">
+      <span class="badge s">{{ h['creadas'] }} nuevas</span>
+      {% if h['actualizadas'] %}<span class="badge">{{ h['actualizadas'] }} actualizadas</span>{% endif %}
+      <span class="badge">{{ h['ignoradas'] }} duplicadas</span>
+      {% if h['con_error'] %}<span class="badge w">{{ h['con_error'] }} con error</span>{% endif %}
+      {% if h['deshecha_at'] %}<span class="badge w">deshecha</span>
+      {% else %}<button class="btn chico" data-deshacer="{{ h['id'] }}">Deshacer</button>{% endif %}
+    </span>
+  </div>
+  {% else %}<div class="empty">Todavía no importaste nada.</div>{% endfor %}
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  const CAMPOS = {{ campos|list|tojson }};
+  const MAX_FILAS = {{ max_filas }}, CHUNK = {{ max_chunk }};
+  const $ = id => document.getElementById(id);
+  // Encabezados conocidos (español/inglés) -> campo de Jobly
+  const SINONIMOS = {
+    titulo: ['titulo','title','puesto','job title','position','nombre'],
+    empresa_o_cliente: ['empresa_o_cliente','empresa','cliente','company','client','compania'],
+    url: ['url','link','enlace','job url'],
+    fuente: ['fuente','source','plataforma','platform','sitio'],
+    tipo: ['tipo','type','job type','employment type'],
+    modalidad: ['modalidad','remote','remoto','work mode'],
+    pais: ['pais','country','location','ubicacion','region'],
+    seniority: ['seniority','nivel','level','experience level'],
+    presupuesto_min: ['presupuesto_min','budget','presupuesto','budget_min','salary_min','min','salario'],
+    presupuesto_max: ['presupuesto_max','budget_max','salary_max','max'],
+    moneda: ['moneda','currency'],
+    periodo_pago: ['periodo_pago','periodo','payment period','pay period','rate type'],
+    duracion_estimada: ['duracion_estimada','duracion','duration'],
+    stack: ['stack','skills','tecnologias','tags'],
+    requisitos: ['requisitos','requirements'],
+    idioma: ['idioma','language','lang'],
+    cliente_verificado: ['cliente_verificado','payment verified','verificado','verified'],
+    proyectos_previos_cliente: ['proyectos_previos_cliente','client jobs','jobs posted','proyectos previos'],
+    calificacion_cliente: ['calificacion_cliente','client rating','rating'],
+    gasto_total_cliente_usd: ['gasto_total_cliente_usd','client spent','total spent'],
+    propuestas_recibidas: ['propuestas_recibidas','proposals','propuestas'],
+    fecha_publicacion: ['fecha_publicacion','posted','published','fecha','date'],
+    fecha_relevamiento: ['fecha_relevamiento','scraped','collected'],
+    contacto: ['contacto','contact','email','recruiter'],
+    notas: ['notas','notes','comentarios'],
+    descripcion: ['descripcion','description','detalle','body'],
+  };
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9_ ]/g, '').trim();
+
+  // Parser RFC 4180: comillas, comillas duplicadas, saltos de línea dentro de campos.
+  function detectarSeparador(texto) {
+    const linea = texto.split(/\r?\n/)[0] || '';
+    const cuenta = c => (linea.match(new RegExp('\\' + c, 'g')) || []).length;
+    return ['\t', ';', ','].reduce((a, b) => cuenta(b) > cuenta(a) ? b : a, ',');
+  }
+  function parsearCSV(texto) {
+    texto = texto.replace(/^﻿/, '');
+    const sep = detectarSeparador(texto), filas = [];
+    let fila = [], campo = '', comillas = false;
+    for (let i = 0; i < texto.length; i++) {
+      const c = texto[i];
+      if (comillas) {
+        if (c === '"') { if (texto[i + 1] === '"') { campo += '"'; i++; } else comillas = false; }
+        else campo += c;
+      } else if (c === '"' && campo === '') comillas = true;
+      else if (c === sep) { fila.push(campo); campo = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && texto[i + 1] === '\n') i++;
+        fila.push(campo); campo = '';
+        if (fila.some(x => x.trim() !== '')) filas.push(fila);
+        fila = [];
+      } else campo += c;
+    }
+    fila.push(campo);
+    if (fila.some(x => x.trim() !== '')) filas.push(fila);
+    return filas;
+  }
+
+  let encabezados = [], datos = [];
+
+  function autoMapeo(guardado) {
+    return encabezados.map(h => {
+      if (guardado && guardado[h]) return guardado[h];
+      const n = norm(h);
+      return CAMPOS.find(c => c === n) || Object.keys(SINONIMOS).find(c => SINONIMOS[c].includes(n)) || '';
+    });
+  }
+  function mapeoActual() {
+    return [...document.querySelectorAll('#mapeo select')].map(s => s.value);
+  }
+  function filasMapeadas() {
+    const m = mapeoActual();
+    return datos.map(f => { const o = {}; m.forEach((campo, i) => { if (campo && f[i] !== undefined) o[campo] = f[i]; }); return o; });
+  }
+  function validar(o) {
+    if (!/^https?:\/\//i.test((o.url || '').trim())) return 'url inválida';
+    if (!(o.titulo || '').trim()) return 'falta título';
+    return '';
+  }
+  function pintarPreview() {
+    const m = mapeoActual(), filas = filasMapeadas();
+    const cols = CAMPOS.filter(c => m.includes(c));
+    const malas = filas.filter(o => validar(o)).length;
+    $('resumen').textContent = `${filas.length} filas · ${malas} con error (se reportan, no frenan el lote)`;
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    let html = '<tr>' + ['#', ...cols].map(c => `<th style="text-align:left;padding:7px;border-bottom:1px solid var(--line);white-space:nowrap">${esc(c)}</th>`).join('') + '</tr>';
+    filas.slice(0, 20).forEach((o, i) => {
+      const err = validar(o);
+      html += `<tr style="${err ? 'background:#3a1d1d' : ''}" title="${esc(err)}"><td style="padding:6px 7px">${i + 1}</td>` +
+        cols.map(c => `<td style="padding:6px 7px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o[c])}</td>`).join('') + '</tr>';
+    });
+    $('preview').innerHTML = html;
+  }
+  async function cargarTexto(texto) {
+    const filas = parsearCSV(texto);
+    if (filas.length < 2) { toast('El archivo no tiene filas debajo del encabezado'); return; }
+    encabezados = filas[0].map(h => h.trim());
+    datos = filas.slice(1);
+    if (datos.length > MAX_FILAS) { toast(`Máximo ${MAX_FILAS} filas: se toman las primeras`); datos = datos.slice(0, MAX_FILAS); }
+    const idxFuente = autoMapeo(null).indexOf('fuente');
+    if (!$('fuente').value && idxFuente >= 0 && datos[0][idxFuente]) $('fuente').value = datos[0][idxFuente].trim().toLowerCase();
+    let guardado = null;
+    if ($('fuente').value) {
+      try { guardado = (await (await fetch('/api/mapeo?fuente=' + encodeURIComponent($('fuente').value))).json()).mapeo; } catch (e) {}
+    }
+    const auto = autoMapeo(guardado);
+    $('mapeo').innerHTML = encabezados.map((h, i) =>
+      `<div><label style="margin-top:0">${h.replace(/[&<>"]/g, '')}</label><select data-i="${i}"><option value="">(ignorar)</option>` +
+      CAMPOS.map(c => `<option value="${c}" ${auto[i] === c ? 'selected' : ''}>${c}</option>`).join('') + '</select></div>').join('');
+    document.querySelectorAll('#mapeo select').forEach(s => s.onchange = pintarPreview);
+    $('paso2').hidden = false;
+    $('reporte').innerHTML = '';
+    pintarPreview();
+  }
+
+  const zona = $('zona');
+  zona.onclick = () => $('archivo').click();
+  zona.ondragover = e => { e.preventDefault(); zona.style.borderColor = 'var(--acc)'; };
+  zona.ondragleave = () => { zona.style.borderColor = ''; };
+  zona.ondrop = e => { e.preventDefault(); zona.style.borderColor = ''; if (e.dataTransfer.files[0]) leerArchivo(e.dataTransfer.files[0]); };
+  $('archivo').onchange = e => e.target.files[0] && leerArchivo(e.target.files[0]);
+  function leerArchivo(f) {
+    if (f.size > 8 * 1024 * 1024) { toast('Archivo demasiado grande (máx. 8 MB)'); return; }
+    const r = new FileReader();
+    r.onload = () => cargarTexto(r.result);
+    r.readAsText(f, 'utf-8');
+  }
+  $('leer-pegado').onclick = () => cargarTexto($('pegado').value);
+
+  $('importar').onclick = async () => {
+    const m = mapeoActual();
+    if (!m.includes('url') || !m.includes('titulo')) { toast('Mapeá al menos url y titulo'); return; }
+    const filas = filasMapeadas(), mapeo = {};
+    encabezados.forEach((h, i) => { if (m[i]) mapeo[h] = m[i]; });
+    $('importar').disabled = true;
+    const total = {creadas: 0, actualizadas: 0, ignoradas: 0, errores: []};
+    try {
+      const {id} = await api('/api/importaciones', {fuente: $('fuente').value || 'importado', politica: $('politica').value, mapeo});
+      for (let i = 0; i < filas.length; i += CHUNK) {
+        $('progreso').textContent = `Importando ${Math.min(i + CHUNK, filas.length)} de ${filas.length}…`;
+        const r = await api(`/api/importaciones/${id}/chunk`, {filas: filas.slice(i, i + CHUNK), desde: i});
+        total.creadas += r.creadas; total.actualizadas += r.actualizadas; total.ignoradas += r.ignoradas;
+        total.errores.push(...r.errores);
+      }
+      $('progreso').textContent = '';
+      const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+      $('reporte').innerHTML = `<div class="card"><b>Listo:</b> ${total.creadas} nuevas, ${total.actualizadas} actualizadas, ${total.ignoradas} duplicadas, ${total.errores.length} con error.
+        ${total.errores.length ? '<ul style="margin:8px 0 0;padding-left:18px">' + total.errores.slice(0, 50).map(e => `<li>Fila ${e.fila}: ${esc(e.motivo)}</li>`).join('') + '</ul>' : ''}
+        <div class="row" style="margin-top:10px"><a class="btn primary" href="/">Ver el pipeline</a><a class="btn" href="/importar">Importar otro</a></div></div>`;
+    } catch (e) { $('progreso').textContent = e.message; }
+    $('importar').disabled = false;
+  };
+
+  document.querySelectorAll('[data-deshacer]').forEach(b => b.onclick = async () => {
+    if (b.dataset.ok !== '1') { b.dataset.ok = '1'; b.textContent = '¿Seguro? Tocá de nuevo'; return; }
+    try {
+      const r = await api(`/api/importaciones/${b.dataset.deshacer}/deshacer`, {});
+      toast(`Deshecha: ${r.borradas} borradas, ${r.restauradas} restauradas${r.conservadas ? `, ${r.conservadas} conservadas (ya las trabajaste)` : ''}`);
+      setTimeout(() => location.reload(), 1500);
+    } catch (e) { toast(e.message); }
+  });
+</script>
+{% endblock %}

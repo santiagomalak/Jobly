@@ -28,11 +28,10 @@
   <div class="sub" style="margin:10px 0 0">En el celular: copiá el enlace de este botón como marcador y pegá el texto de la oferta acá a mano.</div>
 </div>
 
-<h2>Importar planilla (Excel / Google Sheets)</h2>
+<h2>Importar muchas de una</h2>
 <div class="card">
-  <div class="sub">Copiá las filas desde tu planilla y pegalas acá, con la fila de encabezados. Columnas: <b>url</b> (obligatoria), <b>title</b>, <b>description</b>, <b>budget</b> (en español también: link, titulo, descripcion, presupuesto). Hasta 500 filas. Se puntúan todas; las que pasan el filtro aparecen en Pendientes.</div>
-  <textarea id="csv" rows="7" placeholder="url&#9;title&#9;description&#9;budget"></textarea>
-  <div class="row" style="margin-top:12px"><button class="btn primary" id="importar">Importar</button><span class="sub" id="estado2" style="margin:0"></span></div>
+  <div class="sub" style="margin:0 0 10px">CSV del prompt de Claude in Chrome, Excel o Google Sheets: con mapeo de columnas, vista previa, dedupe y deshacer.</div>
+  <a class="btn primary" href="{{ url_for('importar_page') }}">Ir al importador</a>
 </div>
 
 <h2>Registrar postulaciones ya enviadas</h2>
@@ -70,15 +69,6 @@
       if (e.data && e.data.necesita_modulo) $('modulo').focus();
     }
     $('agregar').disabled = false;
-  };
-  $('importar').onclick = async () => {
-    $('importar').disabled = true; $('estado2').textContent = 'Importando…';
-    try {
-      const r = await api('/api/importar', {csv: $('csv').value});
-      $('estado2').textContent = r.filas + ' filas: ' + r.nuevos + ' nuevas, ' + r.aprobados + ' pasaron el filtro.';
-      if (r.aprobados) setTimeout(() => location.href = '/', 1500);
-    } catch (e) { $('estado2').textContent = e.message; }
-    $('importar').disabled = false;
   };
   $('importarPostulaciones').onclick = async () => {
     $('importarPostulaciones').disabled = true; $('estado3').textContent = 'Registrando…';
