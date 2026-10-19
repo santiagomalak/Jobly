@@ -9,6 +9,7 @@
   {% if t['module'] %}<span class="badge">{{ t['module'] }}</span>{% endif %}
   <span class="badge">{{ t['source'] }}</span>
   {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }} detectado</span>{% else %}<span class="badge">sin presupuesto visible</span>{% endif %}
+  {% if t['costo_usd'] %}<span class="badge w">USD {{ t['costo_usd'] }} de costo</span>{% endif %}
   {% if d.get('published') %}<span class="badge">publicado {{ d['published'][:10] }}</span>{% endif %}
   {% if t['verdict'] != 'pass' %}<span class="badge w">no pasó el filtro</span>{% endif %}
   {% for etiqueta, valor in datos_oferta %}<span class="badge">{{ etiqueta }}: {{ valor }}</span>{% endfor %}
@@ -65,6 +66,15 @@
 <div class="card"><ul style="margin:0;padding-left:18px">{% for r in d['reasons'] %}<li>{{ r }}</li>{% endfor %}</ul></div>
 {% endif %}
 
+{% if t['estado'] == 'ganado' %}
+<h2>Costos del proyecto</h2>
+<div class="card">
+  <div class="sub" style="margin:0 0 8px">Gastos reales (infra, herramientas, comisiones): se restan del presupuesto para ver rentabilidad neta.</div>
+  <input id="costo" type="number" min="0" step="1" value="{{ t['costo_usd'] or 0 }}" style="width:140px">
+  <div style="margin-top:10px"><button class="btn" id="guardar-costo">Guardar costo (USD)</button></div>
+</div>
+{% endif %}
+
 <h2>Notas</h2>
 <div class="card">
   <textarea id="notas" rows="4" placeholder="Contacto, fecha de seguimiento, qué respondieron…">{{ t['notas'] or '' }}</textarea>
@@ -115,5 +125,13 @@
     try { await api('/api/notas', {fingerprint: FP, notas: document.getElementById('notas').value}); toast('Notas guardadas'); }
     catch (e) { toast(e.message); }
   };
+
+  const guardarCosto = document.getElementById('guardar-costo');
+  if (guardarCosto) {
+    guardarCosto.onclick = async () => {
+      try { await api('/api/costo', {fingerprint: FP, costo_usd: document.getElementById('costo').value}); toast('Costo guardado'); }
+      catch (e) { toast(e.message); }
+    };
+  }
 </script>
 {% endblock %}

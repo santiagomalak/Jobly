@@ -42,6 +42,7 @@ _COLUMNAS_NUEVAS = {
     "estado_at": "TEXT",
     "postulado_at": "TEXT",
     "seguimientos": "INTEGER DEFAULT 0",
+    "costo_usd": "INTEGER DEFAULT 0",
 }
 
 # Política de memoria/06_plantillas_venta.md: seguimiento 1 a las 48 h, 2 a los 6 días. Máximo 2.
@@ -123,6 +124,14 @@ class Store:
 
     def set_notas(self, fingerprint: str, notas: str) -> None:
         self.conn.execute("UPDATE tickets SET notas = ? WHERE fingerprint = ?", (notas[:4000], fingerprint))
+        self.conn.commit()
+
+    def set_costo(self, fingerprint: str, costo_usd: int) -> None:
+        """Gastos/costos reales imputados al proyecto (infra, herramientas, comisiones):
+        se resta del budget_usd estimado para ver rentabilidad neta, no solo facturación bruta."""
+        self.conn.execute(
+            "UPDATE tickets SET costo_usd = ? WHERE fingerprint = ?", (max(0, int(costo_usd)), fingerprint)
+        )
         self.conn.commit()
 
     def registrar_seguimiento(self, fingerprint: str) -> int:
@@ -220,7 +229,7 @@ class Store:
         """KPIs del CRM: propuestas de los últimos 7 días, respuestas, cierres, racha diaria."""
         ahora = datetime.now(timezone.utc).replace(tzinfo=None)
         rows = self.conn.execute(
-            """SELECT estado, postulado_at, estado_at, budget_usd, verdict FROM tickets
+            """SELECT estado, postulado_at, estado_at, budget_usd, costo_usd, verdict FROM tickets
                WHERE postulado_at IS NOT NULL OR verdict = 'pass'"""
         ).fetchall()
 
@@ -229,9 +238,9 @@ class Store:
         respondidas = [r for r in enviadas if r["estado"] in ("respondido", "ganado")]
         ganados = [r for r in enviadas if r["estado"] == "ganado"]
         mes = ahora.strftime("%Y-%m")
-        facturado = sum(
-            (r["budget_usd"] or 0) for r in ganados if (r["estado_at"] or "").startswith(mes)
-        )
+        ganados_mes = [r for r in ganados if (r["estado_at"] or "").startswith(mes)]
+        facturado = sum((r["budget_usd"] or 0) for r in ganados_mes)
+        costos = sum((r["costo_usd"] or 0) for r in ganados_mes)
 
         dias = {d.date() for d in (_parse_ts(r["postulado_at"]) for r in enviadas) if d}
         dia, racha = ahora.date(), 0
@@ -250,6 +259,8 @@ class Store:
             "tasa_respuesta": round(100 * len(respondidas) / len(enviadas)) if enviadas else 0,
             "ganados": len(ganados),
             "facturado_mes_usd": facturado,
+            "costos_mes_usd": costos,
+            "neto_mes_usd": facturado - costos,
             "meta_mensual_usd": meta_mensual_usd,
             "racha_dias": racha,
         }

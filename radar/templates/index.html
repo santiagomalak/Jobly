@@ -32,6 +32,10 @@
     <div class="t">ganado este mes (según presupuesto)</div>
     <div class="bar"><i style="width:{{ [100, (100 * m.facturado_mes_usd / m.meta_mensual_usd)|round|int]|min if m.meta_mensual_usd else 0 }}%"></i></div>
   </div>
+  <div class="card kpi">
+    <div class="n">USD {{ m.neto_mes_usd }}{% if m.costos_mes_usd %}<span style="font-size:15px;color:var(--mut)"> (−{{ m.costos_mes_usd }} costos)</span>{% endif %}</div>
+    <div class="t">neto este mes (facturado − costos)</div>
+  </div>
 </div>
 
 <div class="row" style="margin:22px 0 12px" id="tabs">

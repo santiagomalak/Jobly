@@ -236,6 +236,16 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         store().set_notas(_fp_valido(datos), str(datos.get("notas", "")))
         return jsonify(ok=True)
 
+    @app.post("/api/costo")
+    def api_costo():
+        datos = request.get_json(silent=True) or {}
+        try:
+            costo = int(datos.get("costo_usd", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="costo inválido"), 400
+        store().set_costo(_fp_valido(datos), costo)
+        return jsonify(ok=True)
+
     def _ticket_desde_fila(row) -> Ticket:
         return _ticket_desde_datos(json.loads(row["payload"] or "{}"))
 
