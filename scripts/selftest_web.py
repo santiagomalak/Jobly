@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+if hasattr(sys.stdout, "reconfigure"):  # consola de Windows (cp1252) y emojis
+    sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 #  pop() no alcanza: radar.config hace load_dotenv() al importarse (recién cuando se
@@ -49,24 +51,40 @@ def test_turso_adapter() -> None:
         ]
     }
     conn = db.TursoConnection("libsql://mi-db-org.turso.io", "tok")
-    with patch("radar.db.requests.post", return_value=resp) as post:
+    with patch("radar.db.requests.Session.post", return_value=resp) as post:
         fila = conn.execute("SELECT ?, ?, ?", (5, "a", None)).fetchone()
         url = post.call_args.args[0]
         body = post.call_args.kwargs["json"]
-        headers = post.call_args.kwargs["headers"]
     check(url == "https://mi-db-org.turso.io/v2/pipeline", "libsql:// se convierte a https:// /v2/pipeline")
-    check(headers["Authorization"] == "Bearer tok", "envía el token como Bearer")
+    check(conn._http.headers["Authorization"] == "Bearer tok", "envía el token como Bearer")
+    check(db.TursoConnection("libsql://mi-db-org.turso.io", "tok")._http is conn._http, "reutiliza la sesión HTTP (sin handshake por consulta)")
     check(body["requests"][0]["stmt"]["args"][0] == {"type": "integer", "value": "5"}, "entero codificado como string")
     check(body["requests"][0]["stmt"]["args"][2] == {"type": "null"}, "None codificado como null")
     check(body["requests"][-1] == {"type": "close"}, "cierra el pipeline")
     check((fila["n"], fila["t"], fila["x"]) == (7, "hola", None), "decodifica filas por nombre")
     resp.json.return_value = {"results": [{"type": "error", "error": {"message": "boom"}}]}
-    with patch("radar.db.requests.post", return_value=resp):
+    with patch("radar.db.requests.Session.post", return_value=resp):
         try:
             conn.execute("SELECT 1")
             check(False, "un error de Turso debe levantar excepción")
         except RuntimeError as exc:
             check("boom" in str(exc), "propaga el mensaje de error de Turso")
+
+    # Transacción: BEGIN + pasos condicionados + COMMIT/ROLLBACK en un solo request
+    resp.json.return_value = {"results": [{"type": "ok", "response": {"type": "batch", "result": {
+        "step_results": [None, {"cols": [], "rows": []}, None, None, None],
+        "step_errors": [None, None, {"message": "UNIQUE constraint failed"}, None, None]}}}]}
+    with patch("radar.db.requests.Session.post", return_value=resp) as post:
+        try:
+            conn.transaccion([("INSERT INTO t VALUES (?)", (1,)), ("INSERT INTO t VALUES (?)", (1,))])
+            check(False, "un paso fallido debe levantar excepción")
+        except RuntimeError as exc:
+            check("UNIQUE" in str(exc), "transacción: un paso que falla levanta el error")
+        pasos = post.call_args.kwargs["json"]["requests"][0]["batch"]["steps"]
+    check(pasos[0]["stmt"]["sql"] == "BEGIN" and pasos[-2]["stmt"]["sql"] == "COMMIT"
+          and pasos[-1]["condition"]["type"] == "not", "transacción: BEGIN … COMMIT y ROLLBACK si algo falla")
+    check(all(p["condition"] == {"type": "ok", "step": i} for i, p in enumerate(pasos[1:-1])),
+          "transacción: cada paso depende de que el anterior haya salido bien")
 
 
 def test_fuentes() -> None:
