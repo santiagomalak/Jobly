@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 from .memory import Memory
 from .models import Ticket
@@ -37,14 +39,24 @@ class Encaje:
     anios: int | None = None
 
 
-def _texto_perfil(mem: Memory) -> str:
+@lru_cache(maxsize=4)
+def _perfil_de(memory_dir: str) -> str:
+    mem = Memory(Path(memory_dir))
     partes = [mem.perfil_core(), mem.contexto_personal()]
     partes += [mem.modulo(m) for m in ("DATA", "WEB", "AUTOMATION", "BOTS", "SCRAPING")]
     return "\n".join(partes).lower()
 
 
+def texto_perfil(mem: Memory) -> str:
+    """Todo lo que la memoria dice que sabés hacer, en minúsculas (cacheado por proceso)."""
+    return _perfil_de(str(mem.dir))
+
+
 def analizar(ticket: Ticket, mem: Memory) -> Encaje:
-    texto, perfil = ticket.text, _texto_perfil(mem)
+    return encaje_texto(ticket.text, texto_perfil(mem))
+
+
+def encaje_texto(texto: str, perfil: str) -> Encaje:
     enc = Encaje()
     for tec in TECNOLOGIAS:
         if _patron(tec, False).search(texto):

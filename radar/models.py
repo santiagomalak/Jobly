@@ -37,6 +37,12 @@ class Ticket:
     pitch: str = ""
     pitch_engine: str = ""
 
+    # Datos estructurados de una importación (empresa, presupuesto_min/max, moneda,
+    # periodo_pago, duracion_dias, cliente_verificado, etc.). Vacío en lo que trae el cron.
+    extra: dict[str, Any] = field(default_factory=dict)
+    score_oportunidad: int | None = None
+    score_detalle: list[list[Any]] = field(default_factory=list)
+
     @property
     def fingerprint(self) -> str:
         """Huella estable para deduplicar entre fuentes."""
