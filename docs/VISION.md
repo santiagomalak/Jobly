@@ -91,7 +91,7 @@ tecnológicas (web, IA, automatización, software a medida) que está por lanzar
 |---|---|
 | RemoteOK | funciona (API pública) |
 | WeWorkRemotely | funciona (RSS) |
-| Reddit | roto (403) — pendiente pasar a API oficial OAuth |
+| Reddit | por feed RSS público sin cuenta (API oficial rechazada el 05/10/2026) |
 | HN "seeking freelancer" | funciona (arreglado 2026-09-22) |
 | Remotive | funciona (API pública, uso personal permitido) |
 | **Google Sheets/Excel** | **funciona** — fuente `sheet` (CSV publicado) y, en el CRM web, "Agregar": una oferta suelta o filas pegadas desde la planilla. Se puntúan igual que todo lo demás |

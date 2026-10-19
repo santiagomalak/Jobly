@@ -32,7 +32,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GROQ_API_KEY`, `OPENROUTER_API_KEY` | tu `.env` local |
 | `DISCORD_WEBHOOK_RADAR`, `DISCORD_WEBHOOK_PROPUESTAS`, `DISCORD_WEBHOOK_ERRORES` | tu `.env` local |
 | `JOBLY_URL` | la URL de Vercel del paso 3 (sin barra final). Hace que cada alerta de Discord traiga un link directo al ticket. Cargala después de desplegar |
-| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` | opcionales, ver "Reddit" abajo |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` | opcionales y hoy sin uso: Reddit va por RSS, ver "Reddit" abajo |
 
 Después: pestaña **Actions** → workflow `radar` → **Run workflow**. Tiene que terminar en verde y
 mandar el resumen al canal `#radar`. (La primera corrida evalúa todo como nuevo: es normal.)
@@ -60,17 +60,18 @@ mandar el resumen al canal `#radar`. (La primera corrida evalúa todo como nuevo
 - Cualquier otra ruta sin sesión te manda a `/login`.
 - En Agregar, cargá una oferta de prueba: aparece en Pipeline en el celular y en la PC.
 
-## Reddit (opcional, 5 min)
+## Reddit
 
-r/forhire, r/slavelabour y r/jobbit son de las pocas fuentes con micro-proyectos reales, pero
-Reddit bloquea el acceso anónimo (403). Con su API oficial de solo lectura funcionan:
+r/forhire, r/slavelabour, r/jobbit y r/n8n se leen por el feed RSS público de cada subreddit
+(`/new/.rss`), sin cuenta ni credenciales. No hay nada que configurar.
 
-1. reddit.com/prefs/apps → "create another app" → tipo **script**, redirect uri `http://localhost:8080`.
-2. Copiá el **client id** (debajo del nombre de la app) y el **secret**.
-3. Cargalos como `REDDIT_CLIENT_ID` y `REDDIT_CLIENT_SECRET` en tu `.env` y en los secrets de GitHub.
-   `REDDIT_USER_AGENT` = `python:jobly-radar:1.0 (by /u/tu_usuario)`.
-
-Sin estas variables la fuente sigue fallando en silencio y el resto del radar funciona igual.
+- Reddit permite un pedido por ventana sin cuenta: el radar los pide de a uno y la corrida tarda
+  ~1 minuto más por subreddit.
+- Desde IPs de nube (GitHub Actions) Reddit puede responder 403/429. En ese caso la fuente falla
+  sola y el resto del radar sigue; desde tu PC funciona.
+- La API oficial quedó descartada: desde nov/2025 exige aprobación (Responsible Builder Policy) y
+  el pedido de Jobly fue rechazado el 05/10/2026. No reenviarlo. Si algún día hay credenciales,
+  `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` siguen soportadas.
 
 ## Local
 

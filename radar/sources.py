@@ -11,6 +11,7 @@ import io
 import logging
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -350,7 +351,7 @@ def fetch_workingnomads(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket
 
 
 # --------------------------------------------------------------------------
-# Reddit (JSON público, sin credenciales)
+# Reddit (feed RSS público; API oficial solo si hay credenciales)
 # --------------------------------------------------------------------------
 _reddit_token: dict[str, Any] = {"valor": "", "expira": 0.0}
 
@@ -377,18 +378,83 @@ def _token_reddit(user_agent: str, timeout: int) -> str:
     return _reddit_token["valor"]
 
 
+def _solo_hiring(url: str, title: str) -> bool:
+    # r/forhire: solo interesan los [HIRING]. r/slavelabour: los [OFFER] son gente ofreciéndose.
+    u, t = url.lower(), title.lower()
+    if "forhire" in u:
+        return "[hiring]" in t
+    if "slavelabour" in u:
+        return "[offer]" not in t
+    return True
+
+
+# Cola que Reddit agrega a cada entrada del feed: "submitted by /u/alguien [link] [comments]".
+_COLA_RSS_REDDIT = re.compile(r"\s*submitted by\s+/u/\S+.*$", re.I)
+
+
+# Sin cuenta, Reddit permite un pedido por ventana (x-ratelimit-remaining llega a 0 tras el
+# primero). Las fuentes corren en paralelo, así que los feeds se piden de a uno y respetando
+# el x-ratelimit-reset que devuelve cada respuesta.
+_reddit_rss_turno = threading.Lock()
+_reddit_rss_libre = {"desde": 0.0}
+_REDDIT_RSS_ESPERA_MAX = 120
+
+
+def _pedir_rss_reddit(feed_url: str, agent: str | None) -> Any:
+    with _reddit_rss_turno:
+        espera = _reddit_rss_libre["desde"] - time.time()
+        if espera > _REDDIT_RSS_ESPERA_MAX:
+            raise RuntimeError(f"Reddit RSS pide esperar {int(espera)} s; se saltea esta corrida")
+        if espera > 0:
+            time.sleep(espera)
+        feed = feedparser.parse(feed_url, agent=agent)
+        cabeceras = getattr(feed, "headers", None) or {}
+        try:
+            if float(cabeceras.get("x-ratelimit-remaining", 1)) < 1:
+                _reddit_rss_libre["desde"] = time.time() + float(cabeceras.get("x-ratelimit-reset", 60)) + 1
+        except (TypeError, ValueError):
+            pass
+        return feed
+
+
+def _reddit_rss(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
+    """Feed Atom público del subreddit (/new/.rss). No pide cuenta ni credenciales."""
+    feed = _pedir_rss_reddit(url.replace("/new.json", "/new/.rss"), cfg.get("user_agent"))
+    estado = int(getattr(feed, "status", 200) or 200)
+    if estado >= 400:
+        raise RuntimeError(f"Reddit RSS respondió {estado}")
+    if getattr(feed, "bozo", 0) and not feed.entries:
+        raise RuntimeError(f"feed ilegible: {getattr(feed, 'bozo_exception', '')}")
+    tickets: list[Ticket] = []
+    for entry in feed.entries:
+        if not _is_fresh(entry, int(cfg.get("lookback_hours", 36))):
+            continue
+        title = _clean(getattr(entry, "title", ""))
+        if not _solo_hiring(url, title):
+            continue
+        tickets.append(
+            Ticket(
+                source=name,
+                title=title,
+                url=getattr(entry, "link", ""),
+                description=_COLA_RSS_REDDIT.sub("", _clean(getattr(entry, "summary", "")))[:4000],
+                published=getattr(entry, "published", "") or getattr(entry, "updated", ""),
+            )
+        )
+    return tickets
+
+
 def fetch_reddit(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
-    """Con REDDIT_CLIENT_ID/SECRET usa la API oficial (OAuth). Sin ellas prueba el JSON público,
-    que Reddit suele bloquear con 403: en ese caso la fuente falla sola sin tumbar la corrida."""
+    """Con REDDIT_CLIENT_ID/SECRET usa la API oficial (OAuth). Sin ellas lee el feed RSS público
+    del subreddit: el JSON anónimo da 403 y Reddit rechazó el pedido de acceso a la API (05/10/2026)."""
     ua = os.environ.get("REDDIT_USER_AGENT") or cfg.get("user_agent")
     timeout = int(cfg.get("http_timeout", 20))
     token = _token_reddit(ua, timeout)
-    headers = {"User-Agent": ua}
-    destino = url
-    if token:
-        headers["Authorization"] = f"bearer {token}"
-        destino = url.replace("https://www.reddit.com", "https://oauth.reddit.com").replace(".json", "")
-        destino += ("&" if "?" in destino else "?") + "raw_json=1"
+    if not token:
+        return _reddit_rss(name, url, cfg)
+    headers = {"User-Agent": ua, "Authorization": f"bearer {token}"}
+    destino = url.replace("https://www.reddit.com", "https://oauth.reddit.com").replace(".json", "")
+    destino += ("&" if "?" in destino else "?") + "raw_json=1"
     r = requests.get(destino, headers=headers, timeout=timeout)
     r.raise_for_status()
     children = r.json().get("data", {}).get("children", [])
@@ -400,8 +466,7 @@ def fetch_reddit(name: str, url: str, cfg: dict[str, Any]) -> list[Ticket]:
         if created < cutoff:
             continue
         title = _clean(d.get("title", ""))
-        # r/forhire: solo interesan los [HIRING]
-        if "forhire" in url.lower() and "[hiring]" not in title.lower():
+        if not _solo_hiring(url, title):
             continue
         tickets.append(
             Ticket(

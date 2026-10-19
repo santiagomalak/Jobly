@@ -33,7 +33,10 @@ sources:
     enabled: true
     url: "https://community.make.com/c/hire-a-pro/hire-help/74.rss"
 
-  # ---------- Reddit (JSON público, sin credenciales) ----------
+  # ---------- Reddit: feed RSS público de cada subreddit (sin cuenta) ----------
+  # Reddit rechazó el pedido de acceso a la API (05/10/2026) y el JSON anónimo da 403.
+  # El radar convierte estas URLs a /new/.rss y las pide de a una (1 pedido por ventana,
+  # suma ~1 min por subreddit a la corrida). Desde IPs de nube puede dar 403/429.
   - name: reddit-forhire
     type: reddit
     enabled: true

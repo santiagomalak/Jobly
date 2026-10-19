@@ -121,10 +121,26 @@ def test_fuentes() -> None:
     check(destino.startswith("https://oauth.reddit.com/r/forhire/new?") and hdrs["Authorization"] == "bearer tok", "Reddit: con token usa oauth.reddit.com")
     check(len(rt) == 1 and rt[0].title.startswith("[HIRING]"), "Reddit: devuelve los [HIRING]")
     sources._reddit_token.update(valor="", expira=0.0)
+    feed_reddit = MagicMock(status=200, bozo=0, headers={}, entries=[
+        MagicMock(title="[HIRING] n8n automation", link="https://www.reddit.com/r/forhire/comments/x/",
+                  summary="<p>budget $300</p> submitted by <a>/u/alguien</a> [link] [comments]",
+                  published="2026-10-05T12:00:00+00:00", published_parsed=time.gmtime(), updated_parsed=None),
+        MagicMock(title="[For Hire] dev", link="https://www.reddit.com/r/forhire/comments/y/", summary="",
+                  published="", published_parsed=time.gmtime(), updated_parsed=None)])
     with patch.dict(os.environ, {"REDDIT_CLIENT_ID": "", "REDDIT_CLIENT_SECRET": ""}), \
-         patch("radar.sources.requests.get", return_value=resp(post_reddit)) as gt:
-        sources.fetch_reddit("reddit-forhire", url_r, cfg_r)
-        check(gt.call_args.args[0] == url_r and "Authorization" not in gt.call_args.kwargs["headers"], "Reddit: sin credenciales prueba el JSON público")
+         patch("radar.sources.requests.get") as gt, \
+         patch("radar.sources.feedparser.parse", return_value=feed_reddit) as fp:
+        rr = sources.fetch_reddit("reddit-forhire", url_r, cfg_r)
+    check(fp.call_args.args[0] == "https://www.reddit.com/r/forhire/new/.rss?limit=100" and not gt.called, "Reddit: sin credenciales lee el feed RSS público")
+    check(len(rr) == 1 and rr[0].description == "budget $300", "Reddit RSS: solo los [HIRING] y sin la cola 'submitted by'")
+    with patch.dict(os.environ, {"REDDIT_CLIENT_ID": "", "REDDIT_CLIENT_SECRET": ""}), \
+         patch("radar.sources.feedparser.parse", return_value=MagicMock(status=403, bozo=0, headers={}, entries=[])):
+        try:
+            sources.fetch_reddit("reddit-forhire", url_r, cfg_r)
+            bloqueado = False
+        except RuntimeError:
+            bloqueado = True
+    check(bloqueado, "Reddit RSS: un 403 se informa como error de la fuente")
 
     jobi = {"jobs": [{"id": 1, "jobTitle": "Ops", "url": "https://jobicy.com/j/1", "jobType": ["Contract"],
                       "jobGeo": "Anywhere", "jobLevel": "Junior", "jobDescription": "<b>desc</b>", "pubDate": "2026-09-20"}]}
