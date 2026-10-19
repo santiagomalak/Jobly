@@ -16,3 +16,5 @@ jobs:
       - run: pip install -r requirements.txt
       # Sin internet ni claves: app web, capa Turso (mockeada), store y scoring.
       - run: python scripts/selftest_web.py
+      # Scoring, memoria y pitch (sin claves cae a la plantilla, sin internet)
+      - run: python scripts/selftest.py

@@ -357,14 +357,147 @@ def test_web(path: Path) -> None:
         os.environ.pop("VERCEL", None)
 
 
+def test_crm(path: Path) -> None:
+    print("CRM: migraciones, etapas, importador, score, meta")
+    import json as _json
+
+    from radar import copiloto, importador, migraciones
+    from radar.config import load_config
+    from radar.memory import Memory
+    from radar import fit
+
+    s = Store(path)
+    cols_antes = [r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()]
+    check(migraciones.version_actual(s.conn) == 1 and "etapa" in cols_antes, "la migración 0001 se aplica sola al abrir la base")
+    migraciones.revertir(s.conn, 0)
+    cols_down = [r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()]
+    check("etapa" not in cols_down and "costo_usd" in cols_down, "migrate --down 0 deja el esquema anterior")
+    migraciones.aplicar(s.conn)
+    check([r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()] == cols_antes, "y volver a subir deja el esquema idéntico")
+
+    # Descartar no es postular (bug: "perdido" desde "nuevo" contaba como enviada)
+    a = Ticket(source="x", title="Descartable", url="https://e.com/d", description="d", module="WEB", score=60, verdict="pass")
+    b = Ticket(source="x", title="Postulable", url="https://e.com/p", description="d", module="WEB", score=60, verdict="pass")
+    s.save_many([(a, False), (b, False)])
+    s.mover(a.fingerprint, "descartada")
+    s.marcar(b.fingerprint, "postulado")
+    m = s.metricas(5, 900)
+    check(m["enviadas_total"] == 1 and s.get(a.fingerprint)["postulado_at"] is None, "descartar no suma una postulación enviada")
+    s.marcar(b.fingerprint, "perdido")
+    check(s.get(b.fingerprint)["etapa"] == "rechazada", "perdido después de postular = rechazada")
+    eventos = s.detalle(b.fingerprint)["eventos"]
+    check([e["a_etapa"] for e in eventos][:2] == ["rechazada", "postulada"], "cada cambio de etapa queda en la timeline")
+    c = Ticket(source="x", title="Seguir", url="https://e.com/s", description="d", module="WEB", score=60, verdict="pass")
+    s.save(c)
+    s.mover(c.fingerprint, "postulada")
+    check(s.get(c.fingerprint)["proxima_accion"] == "Seguimiento 1", "al postular se agenda el seguimiento 1")
+    s.conn.execute("UPDATE tickets SET postulado_at = datetime('now', '-20 days'), seguimientos = 2 WHERE fingerprint = ?", (c.fingerprint,))
+    check(s.cerrar_sin_respuesta() == 1 and s.get(c.fingerprint)["etapa"] == "sin_respuesta", "2 seguimientos sin respuesta: se cierra sola")
+
+    # Importador
+    cfg = load_config()
+    mem = Memory(Path(cfg["root"]) / cfg["memory_dir"])
+    imp = importador.Importacion(s, cfg, mem.taxonomia(), fit.texto_perfil(mem))
+    filas = [{"titulo": f"Workflow n8n {i}", "empresa_o_cliente": f"Cliente {i}", "url": f"https://www.workana.com/job/{i}?utm_source=x",
+              "tipo": "freelance", "presupuesto_min": "200", "moneda": "USD", "periodo_pago": "proyecto"} for i in range(270)]
+    filas += [{"titulo": "Sin url", "url": "nope"}] * 10
+    filas += [dict(f, url=f["url"].replace("www.", "").split("?")[0] + "/") for f in filas[:20]]  # duplicados por URL
+    iid = imp.crear("workana", "ignorar", {"title": "titulo"})
+    total = {"creadas": 0, "ignoradas": 0, "errores": 0}
+    for i in range(0, len(filas), importador.MAX_CHUNK):
+        r = imp.chunk(iid, filas[i:i + importador.MAX_CHUNK], i)
+        total["creadas"] += r["creadas"]
+        total["ignoradas"] += r["ignoradas"]
+        total["errores"] += len(r["errores"])
+    check(total == {"creadas": 270, "ignoradas": 20, "errores": 10}, "300 filas: 270 nuevas, 20 duplicadas, 10 errores sin abortar")
+    check(importador.mapeo_guardado(s.conn, "workana") == {"title": "titulo"}, "el mapeo de columnas queda guardado por fuente")
+    antes = s.conn.execute("SELECT COUNT(*) AS n FROM tickets").fetchone()["n"]
+    r = imp.deshacer(iid)
+    despues = s.conn.execute("SELECT COUNT(*) AS n FROM tickets").fetchone()["n"]
+    check(r["borradas"] == 270 and antes - despues == 270, "deshacer el lote borra lo que creó")
+    v, _ = importador.validar({"titulo": "x", "url": "https://e.com/q", "notas": "'=HYPERLINK(1)"}, "f")
+    check(v.extra["notas"] == "=HYPERLINK(1)", "el apóstrofo anti-fórmula del prompt se limpia al importar")
+
+    # Score de oportunidad
+    from radar.oportunidad import calcular
+    perfil = fit.texto_perfil(mem)
+    bueno, _ = importador.validar({"titulo": "Automatizar reportes con n8n", "url": "https://w.com/1", "tipo": "freelance",
+                                   "presupuesto_min": "300", "moneda": "USD", "periodo_pago": "proyecto", "duracion_estimada": "2",
+                                   "stack": "n8n | python", "cliente_verificado": "si", "proyectos_previos_cliente": "6",
+                                   "calificacion_cliente": "4.9", "idioma": "es"}, "w")
+    malo, _ = importador.validar({"titulo": "Senior Platform Engineer", "url": "https://w.com/2", "tipo": "empleo",
+                                  "pais": "USA only", "seniority": "senior", "stack": "scala | kafka | kubernetes",
+                                  "requisitos": "fluent English, 8+ years", "idioma": "en"}, "w")
+    check(calcular(bueno, perfil, cfg)[0] > 80, "proyecto de USD 300 en 2 días con cliente verificado: score > 80")
+    check(calcular(malo, perfil, cfg)[0] < 30, "senior restringido a EE. UU. con inglés hablado: score < 30")
+
+    # Meta: ingreso cargado + pipeline ponderado
+    s.agregar_ingreso(b.fingerprint, 300, "cobrado", (copiloto.et.ahora_art()).date().isoformat())
+    t = s.tablero(cfg)
+    meta = copiloto.meta(t, cfg)
+    check(meta["cobrado"] == 300 and meta["pct_confirmado"] == 33, "un cobro de USD 300 llena un tercio de la meta")
+    check(meta["falta"] > 0 and meta["por_dia"] >= 1, "calcula cuántas propuestas por día faltan")
+    s.close()
+
+
+def test_web_crm(path: Path) -> None:
+    print("Web: CRM nuevo")
+    os.environ["JOBLY_PASSWORD"] = "clave-de-prueba"
+    c = create_app(db_path=path).test_client()
+    for _ in range(10):
+        c.post("/login", data={"password": "mala"}, headers={"X-Real-IP": "9.9.9.9"})
+    r = c.post("/login", data={"password": "clave-de-prueba"}, headers={"X-Real-IP": "9.9.9.9"})
+    check(r.status_code == 429, "10 fallos desde la misma IP: bloqueo temporal (429)")
+    r = c.post("/login", data={"password": "clave-de-prueba"}, headers={"X-Real-IP": "8.8.8.8"})
+    check(r.status_code == 302, "otra IP entra normal")
+
+    r = c.post("/api/importaciones", json={"fuente": "upwork", "politica": "ignorar", "mapeo": {"Title": "titulo", "x": "hack"}})
+    iid = r.json["id"]
+    fila = {"titulo": "=cmd|' /C calc'!A0", "url": "https://upwork.com/jobs/1", "tipo": "freelance",
+            "presupuesto_min": "250", "empresa_o_cliente": "Acme", "duracion_estimada": "3"}
+    r = c.post(f"/api/importaciones/{iid}/chunk", json={"filas": [fila, {"titulo": "x", "url": "mal"}]})
+    check(r.status_code == 200 and r.json["creadas"] == 1 and len(r.json["errores"]) == 1, "la API del importador crea y reporta errores por fila")
+    check(c.post(f"/api/importaciones/{iid}/chunk", json={"filas": [fila] * 101}).status_code == 400, "más de 100 filas por envío se rechaza")
+    check(c.get("/api/mapeo?fuente=upwork").json["mapeo"] == {"Title": "titulo"}, "el mapeo guardado ignora campos inventados")
+    check(b"#" in c.get("/importar").data and b"upwork" in c.get("/importar").data, "el historial de importaciones se ve")
+
+    home = c.get("/").get_data(as_text=True)
+    check("confirmados" in home and "por día" in home, "la home muestra la barra de meta y las propuestas por día")
+    check("★" in home, "la home ordena por score de oportunidad")
+
+    csv_txt = c.get("/exportar.csv").get_data(as_text=True)
+    check("'=cmd" in csv_txt and "\n=cmd" not in csv_txt, "el export CSV neutraliza fórmulas (CSV injection)")
+
+    s = Store(path)
+    fp = s.get_by_url("https://upwork.com/jobs/1")["fingerprint"]
+    s.close()
+    check(c.post("/api/etapa", json={"fingerprint": fp, "etapa": "inventada"}).status_code == 400, "etapa inválida rechazada")
+    r = c.post("/api/etapa", json={"fingerprint": fp, "etapa": "postulada"})
+    check(r.json["proxima_accion"] == "Seguimiento 1", "postular desde la API agenda el seguimiento")
+    check(c.post("/api/accion", json={"fingerprint": fp, "texto": "Llamar", "fecha": "mal"}).status_code == 400, "una próxima acción sin fecha válida se rechaza")
+    check(c.post("/api/accion", json={"fingerprint": fp, "texto": "Llamar", "fecha": "2026-10-20"}).status_code == 200, "guardar próxima acción")
+    check(c.post("/api/evento", json={"fingerprint": fp, "tipo": "respuesta", "detalle": "Piden llamada"}).status_code == 200, "registrar una respuesta en la timeline")
+    check(c.post("/api/ingreso", json={"fingerprint": fp, "monto_usd": "-5"}).status_code == 400, "ingreso negativo rechazado")
+    check(c.post("/api/ingreso", json={"fingerprint": fp, "monto_usd": "250", "estado": "acordado"}).status_code == 200, "cargar un ingreso acordado")
+    det = c.get(f"/ticket/{fp}").get_data(as_text=True)
+    check("Piden llamada" in det and "Timeline" in det and "Por qué esta oportunidad" in det, "el detalle muestra timeline y desglose del score")
+    check("USD 250" in c.get("/").get_data(as_text=True), "el ingreso suma en la barra de meta")
+    r = c.post(f"/api/importaciones/{iid}/deshacer", json={})
+    check(r.json["conservadas"] == 1 and r.json["borradas"] == 0, "deshacer no borra lo que ya postulaste")
+    an = c.get("/analitica").get_data(as_text=True)
+    check("Embudo" in an and "Skills del mercado" in an, "analítica con embudo y gap de skills")
+
+
 def main() -> int:
     test_turso_adapter()
     test_fuentes()
     test_notify()
     test_fit_y_paralelo()
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         test_store(Path(tmp) / "a.sqlite")
         test_web(Path(tmp) / "b.sqlite")
+        test_crm(Path(tmp) / "c.sqlite")
+        test_web_crm(Path(tmp) / "d.sqlite")
     print("\n✅ selftest_web OK")
     return 0
 
