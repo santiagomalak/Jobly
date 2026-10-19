@@ -6,32 +6,42 @@ y la cookie es SameSite=Lax. Las URLs externas se validan antes de ir a un href.
 """
 from __future__ import annotations
 
+import csv
+import dataclasses
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, url_for
 
 from . import ask as asistente
-from . import db, fit
+from . import copiloto, db, fit, importador
+from . import etapas as et
+from . import normalizar as norm
 from . import icono as icono_mod
 from . import seguimiento as seguimiento_mod
 from .config import load_config
 from .memory import Memory
 from .models import Ticket
 from .pitch import build_pitch
+from .oportunidad import calcular
 from .scoring import score_ticket
 from .sources import parse_sheet_csv
-from .store import ESTADOS, Store
+from .store import ESTADOS, Store, etapa_de
 
 MODULOS = ("AUTOMATION", "DATA", "WEB", "SCRAPING", "BOTS")
 _FP = re.compile(r"^[0-9a-f]{32}$")
 _MAX_IMPORT = 500
+_MAX_POSTULACIONES = 100  # cada fila son ~3 viajes a la base: 100 entran holgadas en 60 s
+_LOGIN_MAX_FALLOS = 10
+_LOGIN_VENTANA_MIN = 15
+_CAMPOS_TICKET = {f.name for f in dataclasses.fields(Ticket)}
 
 
 def _url_segura(url: str) -> str:
@@ -43,8 +53,18 @@ _TIPOS = {"full_time": "Full-time", "contract": "Contrato", "freelance": "Freela
 
 
 def _ticket_desde_datos(datos: dict) -> Ticket:
-    datos = {k: v for k, v in datos.items() if k != "fingerprint"}
-    return Ticket(**datos)
+    """Payload JSON -> Ticket, ignorando claves que el modelo ya no (o todavía no) tiene."""
+    return Ticket(**{k: v for k, v in datos.items() if k in _CAMPOS_TICKET})
+
+
+def _ip() -> str:
+    """IP del cliente. En Vercel la pone el proxy en x-real-ip / x-forwarded-for."""
+    reenviada = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for", "").split(",")[0]
+    return (reenviada or request.remote_addr or "?").strip()[:64]
+
+
+def _ts(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _datos_oferta(tags: list[str]) -> list[tuple[str, str]]:
@@ -54,6 +74,30 @@ def _datos_oferta(tags: list[str]) -> list[tuple[str, str]]:
         clave, _, valor = str(tag).partition(":")
         if clave in _ETIQUETAS and valor:
             out.append((_ETIQUETAS[clave], _TIPOS.get(valor, valor) if clave == "tipo" else valor))
+    return out
+
+
+_ETIQUETAS_EXTRA = {
+    "empresa": "Empresa / cliente", "modalidad": "Modalidad", "duracion_dias": "Duración (días)",
+    "cliente_verificado": "Cliente verificado", "proyectos_previos_cliente": "Proyectos previos del cliente",
+    "calificacion_cliente": "Calificación del cliente", "gasto_total_cliente_usd": "Gasto total del cliente (USD)",
+    "propuestas_recibidas": "Propuestas recibidas", "idioma": "Idioma", "contacto": "Contacto",
+}
+
+
+def _datos_extra(extra: dict) -> list[tuple[str, str]]:
+    out = []
+    for clave, etiqueta in _ETIQUETAS_EXTRA.items():
+        valor = extra.get(clave)
+        if valor in (None, ""):
+            continue
+        if clave == "cliente_verificado":
+            valor = "sí" if valor == 1 else "no"
+        out.append((etiqueta, str(valor)))
+    if extra.get("presupuesto_min") or extra.get("presupuesto_max"):
+        rango = "–".join(str(v) for v in dict.fromkeys([extra.get("presupuesto_min"), extra.get("presupuesto_max")]) if v)
+        periodo = {"hora": "/h", "mes": "/mes", "proyecto": " por proyecto"}.get(extra.get("periodo_pago") or "", "")
+        out.append(("Presupuesto", f"{extra.get('moneda') or 'USD'} {rango}{periodo}"))
     return out
 
 
@@ -87,6 +131,19 @@ def create_app(db_path: str | Path | None = None) -> Flask:
 
     def memoria() -> Memory:
         return Memory(root / cfg["memory_dir"])
+
+    def completar_oportunidad(filas: list) -> None:
+        """Calcula y guarda el score de oportunidad de filas que todavía no lo tienen."""
+        perfil = fit.texto_perfil(memoria())
+        cambios = []
+        for fp, datos in store().payloads([r["fingerprint"] for r in filas[:200]]).items():
+            try:
+                tk = _ticket_desde_datos(datos)
+            except TypeError:
+                continue
+            puntos, detalle = calcular(tk, perfil, cfg)
+            cambios.append((puntos, detalle, fp))
+        store().set_oportunidad(cambios)
 
     @app.teardown_appcontext
     def _cerrar(_exc):
@@ -147,12 +204,28 @@ def create_app(db_path: str | Path | None = None) -> Flask:
     def login():
         error = ""
         if request.method == "POST":
+            ip, ahora = _ip(), datetime.now(timezone.utc).replace(tzinfo=None)
+            limite = _ts(ahora - timedelta(minutes=_LOGIN_VENTANA_MIN))
+            conn = store().conn
+            fila = conn.execute("SELECT fallos, desde FROM login_intentos WHERE ip = ?", (ip,)).fetchone()
+            if fila and fila["fallos"] >= _LOGIN_MAX_FALLOS and fila["desde"] >= limite:
+                return render_template(
+                    "login.html", error=f"Demasiados intentos. Probá de nuevo en {_LOGIN_VENTANA_MIN} minutos."
+                ), 429
             intento = (request.form.get("password") or "").encode()
             if hmac.compare_digest(intento, password.encode()):
+                conn.execute("DELETE FROM login_intentos WHERE ip = ?", (ip,))
                 session.clear()
                 session["ok"] = True
                 session.permanent = True
                 return redirect(url_for("index"))
+            conn.execute(
+                """INSERT INTO login_intentos (ip, fallos, desde) VALUES (?, 1, ?)
+                   ON CONFLICT(ip) DO UPDATE SET
+                     fallos = CASE WHEN login_intentos.desde < ? THEN 1 ELSE login_intentos.fallos + 1 END,
+                     desde = CASE WHEN login_intentos.desde < ? THEN excluded.desde ELSE login_intentos.desde END""",
+                (ip, _ts(ahora), limite, limite),
+            )
             time.sleep(0.8)
             error = "Contraseña incorrecta"
         return render_template("login.html", error=error), (401 if error else 200)
@@ -164,34 +237,43 @@ def create_app(db_path: str | Path | None = None) -> Flask:
 
     @app.get("/")
     def index():
-        s = store()
+        t = store().tablero(cfg, completar=completar_oportunidad)
         return render_template(
-            "index.html",
-            m=s.metricas(int(cfg.get("objetivo_semanal", 5)), int(cfg.get("meta_mensual_usd", 900))),
-            pipeline=s.pipeline(),
-            revisar=s.revisar(int(cfg.get("review_score", 30))),
-            seguimientos=s.seguimientos_pendientes(),
-            estados=ESTADOS,
+            "index.html", t=t, m=t["metricas"], meta=copiloto.meta(t, cfg), hoy=copiloto.hoy(t),
+            seguimientos=t["seguimientos"], revisar=t["revisar"], etiquetas=et.ETIQUETAS, etapa_de=etapa_de,
         )
 
     @app.get("/ticket/<fp>")
     def ticket(fp: str):
-        row = store().get(fp) if _FP.match(fp) else None
+        if not _FP.match(fp):
+            abort(404)
+        det = store().detalle(fp)
+        row = det["row"]
         if row is None:
             abort(404)
         try:
             datos = json.loads(row["payload"] or "{}")
         except ValueError:
             datos = {}
-        debido = next((n for r, n, _ in store().seguimientos_pendientes() if r["fingerprint"] == fp), None)
+        ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+        debido = next((n for _, n, _ in store()._vencidos([row], ahora)), None)
         try:
             tk = _ticket_desde_datos(datos)
         except TypeError:  # payload dañado o vacío: se analiza con lo mínimo de la fila
             tk = Ticket(source=row["source"], title=row["title"], url=row["url"])
+        try:
+            detalle_score = json.loads(row["score_detalle"] or "[]")
+        except ValueError:
+            detalle_score = []
+        if row["score_oportunidad"] is None:
+            puntos, detalle_score = calcular(tk, fit.texto_perfil(memoria()), cfg)
+            store().set_oportunidad([(puntos, detalle_score, fp)])
+            row = store().get(fp)
         return render_template(
-            "ticket.html", t=row, d=datos, estados=ESTADOS,
-            datos_oferta=_datos_oferta(datos.get("tags", [])), seguimiento_debido=debido,
-            encaje=fit.analizar(tk, memoria()),
+            "ticket.html", t=row, d=datos, etapa=etapa_de(row), etapas=et.ETAPAS, etiquetas=et.ETIQUETAS,
+            datos_oferta=_datos_oferta(datos.get("tags", [])) + _datos_extra(tk.extra), seguimiento_debido=debido,
+            encaje=fit.analizar(tk, memoria()), detalle_score=detalle_score,
+            eventos=det["eventos"], ingresos=det["ingresos"], hoy=(ahora - timedelta(hours=3)).date().isoformat(),
         )
 
     @app.get("/ask")
@@ -208,7 +290,59 @@ def create_app(db_path: str | Path | None = None) -> Flask:
 
     @app.get("/analitica")
     def analitica_page():
-        return render_template("analitica.html", a=store().analitica(), objetivo=int(cfg.get("objetivo_semanal", 5)))
+        return render_template(
+            "analitica.html", a=store().analitica(), objetivo=int(cfg.get("objetivo_semanal", 5)), gap=_gap(),
+        )
+
+    def _gap(dias: int = 30, limite: int = 400) -> dict:
+        """Tecnologías más pedidas en lo relevado (últimos `dias`) contra lo que dice tu perfil."""
+        rows = store().conn.execute(
+            """SELECT title, substr(payload, 1, 3000) AS p FROM tickets
+               WHERE seen_at >= datetime('now', ?) ORDER BY seen_at DESC LIMIT ?""",
+            (f"-{dias} days", limite),
+        ).fetchall()
+        perfil = fit.texto_perfil(memoria())
+        cuentas: dict[str, int] = {}
+        tenes: set[str] = set()
+        for r in rows:
+            enc = fit.encaje_texto(f"{r['title']} {r['p']}".lower(), perfil)
+            tenes.update(enc.tenes)
+            for tec in enc.tenes + enc.faltan:
+                cuentas[tec] = cuentas.get(tec, 0) + 1
+        orden = sorted(cuentas.items(), key=lambda x: -x[1])
+        return {
+            "avisos": len(rows),
+            "faltan": [(k, n) for k, n in orden if k not in tenes][:12],
+            "tenes": [(k, n) for k, n in orden if k in tenes][:12],
+        }
+
+    @app.get("/importar")
+    def importar_page():
+        return render_template(
+            "importar.html", campos=importador.CAMPOS, historial=importador.historial(store().conn),
+            max_filas=importador.MAX_FILAS, max_chunk=importador.MAX_CHUNK,
+        )
+
+    @app.get("/exportar.csv")
+    def exportar():
+        """Tu pipeline en CSV (backup / análisis en planilla). Celdas neutralizadas contra fórmulas."""
+        cols = ("fingerprint", "title", "url", "source", "tipo", "etapa", "score", "score_oportunidad",
+                "budget_usd", "presupuesto_min", "presupuesto_max", "moneda", "periodo_pago", "seen_at",
+                "postulado_at", "estado_at", "seguimientos", "proxima_accion", "proxima_accion_at", "notas")
+        rows = store().conn.execute(
+            f"""SELECT {', '.join(cols)}, estado FROM tickets
+                WHERE verdict = 'pass' OR postulado_at IS NOT NULL OR COALESCE(etapa, 'relevada') != 'relevada'
+                ORDER BY seen_at DESC"""
+        ).fetchall()
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        for r in rows:
+            w.writerow([norm.celda_export(etapa_de(r) if c == "etapa" else r[c]) for c in cols])
+        return Response(
+            "\ufeff" + buf.getvalue(), mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=jobly-pipeline.csv"},
+        )
 
     @app.get("/agregar")
     def agregar_page():
@@ -361,8 +495,8 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             filas = parse_sheet_csv(str(datos.get("csv", "")), "manual-postulado")
         except RuntimeError as exc:
             return jsonify(error=str(exc)), 400
-        if len(filas) > _MAX_IMPORT:
-            return jsonify(error=f"Máximo {_MAX_IMPORT} filas por importación"), 400
+        if len(filas) > _MAX_POSTULACIONES:
+            return jsonify(error=f"Máximo {_MAX_POSTULACIONES} filas por vez (partilo en tandas)"), 400
         s, mem, tax = store(), memoria(), memoria().taxonomia()
         emparejados, creados = 0, 0
         for t in filas:
@@ -383,5 +517,103 @@ def create_app(db_path: str | Path | None = None) -> Flask:
                 s.set_notas(t.fingerprint, t.description)
             creados += 1
         return jsonify(ok=True, filas=len(filas), emparejados=emparejados, creados=creados)
+
+    @app.post("/api/etapa")
+    def api_etapa():
+        datos = request.get_json(silent=True) or {}
+        fp, etapa = _fp_valido(datos), datos.get("etapa")
+        if etapa not in et.ETAPAS:
+            return jsonify(error="etapa inválida"), 400
+        store().mover(fp, etapa, str(datos.get("detalle", "")))
+        row = store().get(fp)
+        return jsonify(ok=True, etapa=etapa, proxima_accion=row["proxima_accion"],
+                       proxima_accion_at=row["proxima_accion_at"])
+
+    @app.post("/api/accion")
+    def api_accion():
+        datos = request.get_json(silent=True) or {}
+        fp = _fp_valido(datos)
+        fecha = norm.fecha_iso(datos.get("fecha"))
+        texto = str(datos.get("texto", ""))
+        if texto.strip() and not fecha:
+            return jsonify(error="Elegí una fecha para la próxima acción"), 400
+        # La fecha del formulario es un día de Argentina: se guarda a las 09:00 ART (12:00 UTC).
+        store().set_proxima_accion(fp, texto, f"{fecha} 12:00:00" if fecha else None)
+        return jsonify(ok=True)
+
+    @app.post("/api/evento")
+    def api_evento():
+        datos = request.get_json(silent=True) or {}
+        fp, tipo = _fp_valido(datos), datos.get("tipo")
+        detalle = str(datos.get("detalle", "")).strip()
+        if tipo not in ("envio", "respuesta", "entrevista", "nota") or not detalle:
+            return jsonify(error="Elegí el tipo y escribí el detalle"), 400
+        store().agregar_evento(fp, tipo, detalle)
+        return jsonify(ok=True)
+
+    @app.post("/api/ingreso")
+    def api_ingreso():
+        datos = request.get_json(silent=True) or {}
+        fp = _fp_valido(datos) if datos.get("fingerprint") else None
+        try:
+            monto = int(float(datos.get("monto_usd")))
+        except (TypeError, ValueError):
+            return jsonify(error="Monto inválido"), 400
+        estado = datos.get("estado", "acordado")
+        hoy = (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()
+        fecha = norm.fecha_iso(datos.get("fecha")) or hoy
+        if monto <= 0 or estado not in ("acordado", "cobrado"):
+            return jsonify(error="El monto tiene que ser mayor a 0 y el estado acordado o cobrado"), 400
+        store().agregar_ingreso(fp, monto, estado, fecha, str(datos.get("detalle", "")))
+        return jsonify(ok=True)
+
+    @app.post("/api/ingreso/<int:ingreso_id>/<accion>")
+    def api_ingreso_accion(ingreso_id: int, accion: str):
+        if accion == "cobrado":
+            store().marcar_cobrado(ingreso_id)
+        elif accion == "borrar":
+            store().borrar_ingreso(ingreso_id)
+        else:
+            abort(404)
+        return jsonify(ok=True)
+
+    # ---------- importador ----------
+    def _importacion() -> importador.Importacion:
+        mem = memoria()
+        return importador.Importacion(store(), cfg, mem.taxonomia(), fit.texto_perfil(mem))
+
+    @app.get("/api/mapeo")
+    def api_mapeo():
+        return jsonify(mapeo=importador.mapeo_guardado(store().conn, request.args.get("fuente", "")[:40]))
+
+    @app.post("/api/importaciones")
+    def api_importacion_crear():
+        datos = request.get_json(silent=True) or {}
+        mapeo = datos.get("mapeo") if isinstance(datos.get("mapeo"), dict) else None
+        if mapeo:
+            mapeo = {str(k)[:80]: str(v) for k, v in list(mapeo.items())[:60] if v in importador.CAMPOS}
+        iid = _importacion().crear(
+            str(datos.get("fuente", "")).strip().lower(), str(datos.get("politica", "ignorar")), mapeo
+        )
+        return jsonify(ok=True, id=iid)
+
+    @app.post("/api/importaciones/<int:iid>/chunk")
+    def api_importacion_chunk(iid: int):
+        datos = request.get_json(silent=True) or {}
+        filas = datos.get("filas")
+        if not isinstance(filas, list) or not filas or len(filas) > importador.MAX_CHUNK:
+            return jsonify(error=f"Mandá entre 1 y {importador.MAX_CHUNK} filas por envío"), 400
+        try:
+            desde = max(0, int(datos.get("desde", 0)))
+            return jsonify(ok=True, **_importacion().chunk(iid, filas, desde))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+
+    @app.post("/api/importaciones/<int:iid>/deshacer")
+    def api_importacion_deshacer(iid: int):
+        try:
+            return jsonify(ok=True, **_importacion().deshacer(iid))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
 
     return app

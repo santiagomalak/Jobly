@@ -5,10 +5,12 @@
 <a href="{{ url_for('index') }}" style="color:var(--mut);text-decoration:none;font-size:14px">← Pipeline</a>
 <h1 style="margin-top:12px">{{ t['title'] }}</h1>
 <div class="row" style="margin-bottom:14px">
-  <span class="badge s">score {{ t['score'] }}</span>
+  {% if t['score_oportunidad'] is not none %}<span class="badge s">★ oportunidad {{ t['score_oportunidad'] }}</span>{% endif %}
+  <span class="badge">score radar {{ t['score'] }}</span>
+  <span class="badge">{{ t['tipo'] or 'freelance' }}</span>
   {% if t['module'] %}<span class="badge">{{ t['module'] }}</span>{% endif %}
   <span class="badge">{{ t['source'] }}</span>
-  {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }} detectado</span>{% else %}<span class="badge">sin presupuesto visible</span>{% endif %}
+  {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }} detectado</span>{% elif not (t['presupuesto_min'] or t['presupuesto_max']) %}<span class="badge">sin presupuesto visible</span>{% endif %}
   {% if t['costo_usd'] %}<span class="badge w">USD {{ t['costo_usd'] }} de costo</span>{% endif %}
   {% if d.get('published') %}<span class="badge">publicado {{ d['published'][:10] }}</span>{% endif %}
   {% if t['verdict'] != 'pass' %}<span class="badge w">no pasó el filtro</span>{% endif %}
@@ -20,9 +22,19 @@
   <a class="btn" href="{{ url_for('ask_page', fp=t['fingerprint']) }}">Responder preguntas del formulario</a>
 </div>
 
-<h2>Estado</h2>
-<div class="row" id="estados">
-  {% for e in estados %}<button class="btn {% if t['estado'] == e %}on{% endif %}" data-estado="{{ e }}">{{ e|capitalize }}</button>{% endfor %}
+<h2>Etapa</h2>
+<div class="row" id="etapas">
+  {% for e in etapas %}<button class="btn chico {% if etapa == e %}on{% endif %}" data-etapa="{{ e }}">{{ etiquetas[e] }}</button>{% endfor %}
+</div>
+
+<h2>Próxima acción</h2>
+<div class="card">
+  <div class="row">
+    <input id="accion" type="text" maxlength="200" placeholder="Ej.: mandar propuesta, preparar entrevista" value="{{ t['proxima_accion'] or '' }}" style="flex:1 1 220px">
+    <input id="accion-fecha" type="date" value="{{ (t['proxima_accion_at'] or '')[:10] }}" style="width:170px">
+    <button class="btn" id="guardar-accion">Guardar</button>
+  </div>
+  <div class="sub" style="margin:8px 0 0">Al postular se agenda sola el seguimiento ({% if t['tipo'] == 'empleo' %}7 y 14 días{% else %}2 y 6 días{% endif %}). Lo vencido aparece en "Hoy".</div>
 </div>
 
 <h2>Pitch <span class="badge" id="motor">{{ t['engine'] or 'sin generar' }}</span></h2>
@@ -34,17 +46,6 @@
     <span class="sub" style="margin:0">Editalo antes de copiar: es un borrador, el envío lo decidís vos.</span>
   </div>
 </div>
-
-{% if encaje.tenes or encaje.faltan or encaje.anios %}
-<h2>Encaje con tu perfil</h2>
-<div class="card">
-  {% if encaje.tenes %}<div class="sub" style="margin:0 0 6px">Lo que pide y ya tenés</div>
-  <div class="row">{% for x in encaje.tenes %}<span class="badge s">{{ x }}</span>{% endfor %}</div>{% endif %}
-  {% if encaje.faltan %}<div class="sub" style="margin:12px 0 6px">Lo que menciona y no figura en tu perfil (no lo prometas en la carta)</div>
-  <div class="row">{% for x in encaje.faltan %}<span class="badge w">{{ x }}</span>{% endfor %}</div>{% endif %}
-  {% if encaje.anios %}<div class="sub" style="margin:12px 0 0">Menciona {{ encaje.anios }} años{% if encaje.anios >= 3 %}: es un requisito alto para tu experiencia comercial actual{% endif %}.</div>{% endif %}
-</div>
-{% endif %}
 
 {% if seguimiento_debido %}
 <h2>Seguimiento {{ seguimiento_debido }} vencido</h2>
@@ -58,15 +59,61 @@
 </div>
 {% endif %}
 
+{% if detalle_score %}
+<h2>Por qué esta oportunidad puntúa {{ t['score_oportunidad'] }}</h2>
+<div class="card" style="padding:6px 14px">
+  {% for nombre, pts, maximo, nota in detalle_score %}
+  <div class="row" style="justify-content:space-between;padding:7px 0;{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
+    <span>{{ nombre }} <span class="sub" style="margin:0">· {{ nota }}</span></span>
+    <span class="badge {% if maximo and pts >= maximo * 0.7 %}s{% elif pts < 0 or (maximo and pts < maximo * 0.35) %}w{% endif %}">{{ pts }}{% if maximo %} / {{ maximo }}{% endif %}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if encaje.tenes or encaje.faltan or encaje.anios %}
+<h2>Encaje con tu perfil</h2>
+<div class="card">
+  {% if encaje.tenes %}<div class="sub" style="margin:0 0 6px">Lo que pide y ya tenés</div>
+  <div class="row">{% for x in encaje.tenes %}<span class="badge s">{{ x }}</span>{% endfor %}</div>{% endif %}
+  {% if encaje.faltan %}<div class="sub" style="margin:12px 0 6px">Lo que menciona y no figura en tu perfil (no lo prometas en la carta)</div>
+  <div class="row">{% for x in encaje.faltan %}<span class="badge w">{{ x }}</span>{% endfor %}</div>{% endif %}
+  {% if encaje.anios %}<div class="sub" style="margin:12px 0 0">Menciona {{ encaje.anios }} años{% if encaje.anios >= 3 %}: es un requisito alto para tu experiencia comercial actual{% endif %}.</div>{% endif %}
+</div>
+{% endif %}
+
 <h2>La oferta completa</h2>
 <div class="card" style="white-space:pre-wrap;word-break:break-word">{{ d.get('description') or '(sin descripción)' }}</div>
 
 {% if d.get('reasons') %}
-<h2>Por qué puntuó así</h2>
+<h2>Por qué pasó (o no) el filtro del radar</h2>
 <div class="card"><ul style="margin:0;padding-left:18px">{% for r in d['reasons'] %}<li>{{ r }}</li>{% endfor %}</ul></div>
 {% endif %}
 
-{% if t['estado'] == 'ganado' %}
+{% if etapa in ('oferta', 'ganada') or ingresos %}
+<h2>Ingresos de este proyecto</h2>
+<div class="card">
+  {% for i in ingresos %}
+  <div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)">
+    <span>USD {{ i['monto_usd'] }} · {{ i['fecha'] }} {% if i['detalle'] %}<span class="sub" style="margin:0">· {{ i['detalle'] }}</span>{% endif %}</span>
+    <span class="row" style="gap:6px">
+      <span class="badge {% if i['estado'] == 'cobrado' %}s{% endif %}">{{ i['estado'] }}</span>
+      {% if i['estado'] != 'cobrado' %}<button class="btn chico" data-ingreso="{{ i['id'] }}" data-accion="cobrado">Cobrado</button>{% endif %}
+      <button class="btn chico" data-ingreso="{{ i['id'] }}" data-accion="borrar">Borrar</button>
+    </span>
+  </div>
+  {% endfor %}
+  <div class="row" style="margin-top:10px">
+    <input id="ing-monto" type="number" min="1" placeholder="USD" style="width:110px" value="{{ t['presupuesto_min'] or t['budget_usd'] or '' }}">
+    <select id="ing-estado" style="width:130px"><option value="acordado">acordado</option><option value="cobrado">cobrado</option></select>
+    <input id="ing-fecha" type="date" value="{{ hoy }}" style="width:170px">
+    <button class="btn" id="ing-guardar">Agregar ingreso</button>
+  </div>
+  <div class="sub" style="margin:8px 0 0">Lo acordado y lo cobrado suman a la barra de meta del mes. Un anticipo y el saldo pueden ir como dos ingresos.</div>
+</div>
+{% endif %}
+
+{% if etapa == 'ganada' %}
 <h2>Costos del proyecto</h2>
 <div class="card">
   <div class="sub" style="margin:0 0 8px">Gastos reales (infra, herramientas, comisiones): se restan del presupuesto para ver rentabilidad neta.</div>
@@ -74,6 +121,28 @@
   <div style="margin-top:10px"><button class="btn" id="guardar-costo">Guardar costo (USD)</button></div>
 </div>
 {% endif %}
+
+<h2>Timeline</h2>
+<div class="card">
+  <div class="row">
+    <select id="ev-tipo" style="width:150px">
+      <option value="respuesta">Respuesta</option><option value="entrevista">Entrevista</option>
+      <option value="envio">Envío (CV / propuesta)</option><option value="nota">Nota</option>
+    </select>
+    <input id="ev-detalle" type="text" maxlength="1000" placeholder="Qué pasó: qué respondieron, qué versión de CV mandaste…" style="flex:1 1 220px">
+    <button class="btn" id="ev-guardar">Registrar</button>
+  </div>
+  <div style="margin-top:12px">
+    {% for ev in eventos %}
+    <div style="padding:7px 0;border-top:1px solid var(--line);font-size:14px">
+      <span class="sub" style="margin:0">{{ ev['fecha'][:16] }} UTC ·</span>
+      {% if ev['tipo'] == 'cambio_etapa' %}{{ etiquetas.get(ev['de_etapa'], ev['de_etapa'] or '—') }} → <b>{{ etiquetas.get(ev['a_etapa'], ev['a_etapa']) }}</b>{% if ev['detalle'] %} <span class="sub" style="margin:0">({{ ev['detalle'] }})</span>{% endif %}
+      {% else %}<span class="badge">{{ ev['tipo'] }}</span> {{ ev['detalle'] }}{% endif %}
+    </div>
+    {% else %}<div class="sub" style="margin:0">Todavía no hay eventos. Cada cambio de etapa queda registrado acá con fecha.</div>{% endfor %}
+    {% if t['seen_at'] %}<div class="sub" style="margin:8px 0 0">Relevada el {{ t['seen_at'][:10] }}{% if t['postulado_at'] %} · postulada el {{ t['postulado_at'][:10] }}{% endif %}.</div>{% endif %}
+  </div>
+</div>
 
 <h2>Notas</h2>
 <div class="card">
@@ -85,51 +154,74 @@
 {% block js %}
 <script>
   const FP = {{ t['fingerprint']|tojson }};
-  document.getElementById('copiar').onclick = () => copiar(document.getElementById('pitch').value);
+  const $ = id => document.getElementById(id);
+  $('copiar').onclick = () => copiar($('pitch').value);
 
-  document.querySelectorAll('[data-estado]').forEach(b => b.onclick = async () => {
+  document.querySelectorAll('[data-etapa]').forEach(b => b.onclick = async () => {
     try {
-      await api('/api/marcar', {fingerprint: FP, estado: b.dataset.estado});
-      document.querySelectorAll('[data-estado]').forEach(x => x.classList.toggle('on', x === b));
-      toast('Estado: ' + b.dataset.estado);
+      const r = await api('/api/etapa', {fingerprint: FP, etapa: b.dataset.etapa});
+      toast('Etapa: ' + b.textContent + (r.proxima_accion ? ' · próxima: ' + r.proxima_accion : ''));
+      setTimeout(() => location.reload(), 800);
     } catch (e) { toast(e.message); }
   });
 
-  document.getElementById('regen').onclick = async (ev) => {
+  $('guardar-accion').onclick = async () => {
+    try { await api('/api/accion', {fingerprint: FP, texto: $('accion').value, fecha: $('accion-fecha').value}); toast('Próxima acción guardada'); }
+    catch (e) { toast(e.message); }
+  };
+
+  $('regen').onclick = async (ev) => {
     const btn = ev.currentTarget; btn.disabled = true; const antes = btn.textContent; btn.textContent = 'Generando…';
     try {
       const r = await api('/api/pitch', {fingerprint: FP});
-      document.getElementById('pitch').value = r.pitch;
-      document.getElementById('motor').textContent = r.engine;
+      $('pitch').value = r.pitch;
+      $('motor').textContent = r.engine;
       btn.textContent = 'Regenerar';
     } catch (e) { toast(e.message); btn.textContent = antes; }
     btn.disabled = false;
   };
 
-  const segGen = document.getElementById('seg-gen');
+  const segGen = $('seg-gen');
   if (segGen) {
     segGen.onclick = async () => {
       segGen.disabled = true; segGen.textContent = 'Generando…';
-      try { const r = await api('/api/seguimiento', {fingerprint: FP}); document.getElementById('seg').value = r.text; }
+      try { const r = await api('/api/seguimiento', {fingerprint: FP}); $('seg').value = r.text; }
       catch (e) { toast(e.message); }
       segGen.disabled = false; segGen.textContent = 'Generar';
     };
-    document.getElementById('seg-copiar').onclick = () => copiar(document.getElementById('seg').value);
-    document.getElementById('seg-hecho').onclick = async () => {
+    $('seg-copiar').onclick = () => copiar($('seg').value);
+    $('seg-hecho').onclick = async () => {
       try { await api('/api/seguimiento_hecho', {fingerprint: FP}); toast('Seguimiento registrado'); setTimeout(() => location.reload(), 900); }
       catch (e) { toast(e.message); }
     };
   }
 
-  document.getElementById('guardar-notas').onclick = async () => {
-    try { await api('/api/notas', {fingerprint: FP, notas: document.getElementById('notas').value}); toast('Notas guardadas'); }
+  $('ev-guardar').onclick = async () => {
+    try { await api('/api/evento', {fingerprint: FP, tipo: $('ev-tipo').value, detalle: $('ev-detalle').value}); location.reload(); }
     catch (e) { toast(e.message); }
   };
 
-  const guardarCosto = document.getElementById('guardar-costo');
-  if (guardarCosto) {
-    guardarCosto.onclick = async () => {
-      try { await api('/api/costo', {fingerprint: FP, costo_usd: document.getElementById('costo').value}); toast('Costo guardado'); }
+  $('guardar-notas').onclick = async () => {
+    try { await api('/api/notas', {fingerprint: FP, notas: $('notas').value}); toast('Notas guardadas'); }
+    catch (e) { toast(e.message); }
+  };
+
+  if ($('ing-guardar')) {
+    $('ing-guardar').onclick = async () => {
+      try {
+        await api('/api/ingreso', {fingerprint: FP, monto_usd: $('ing-monto').value, estado: $('ing-estado').value, fecha: $('ing-fecha').value});
+        location.reload();
+      } catch (e) { toast(e.message); }
+    };
+  }
+  document.querySelectorAll('[data-ingreso]').forEach(b => b.onclick = async () => {
+    try { await api(`/api/ingreso/${b.dataset.ingreso}/${b.dataset.accion}`, {}); location.reload(); }
+    catch (e) { toast(e.message); }
+  });
+
+  if ($('guardar-costo')) {
+    $('guardar-costo').onclick = async () => {
+      try { await api('/api/costo', {fingerprint: FP, costo_usd: $('costo').value}); toast('Costo guardado'); }
       catch (e) { toast(e.message); }
     };
   }

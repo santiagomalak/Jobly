@@ -10,6 +10,7 @@
     <span class="row" style="gap:6px">
       <span class="badge">{{ f.enviadas }} enviadas</span>
       <span class="badge s">{{ f.respuestas }} respuestas</span>
+      {% if f.entrevistas %}<span class="badge">{{ f.entrevistas }} entrevistas</span>{% endif %}
       <span class="badge">{{ f.ganadas }} ganadas</span>
       {% if f.enviadas >= 5 %}<span class="badge s">{{ f.tasa }}%</span>{% else %}<span class="badge">pocos datos</span>{% endif %}
     </span>
@@ -36,6 +37,26 @@
   <div class="sub" style="margin:10px 0 0">Barra brillante = semana que llegó al objetivo.</div>
 </div>
 
-{{ tabla(a.por_modulo, 'Por tipo de trabajo') }}
+<h2>Embudo</h2>
+<div class="card">
+  {% set tope = (a.embudo[0][1] or 1) %}
+  {% for nombre, n in a.embudo %}
+  <div style="margin:6px 0">
+    <div class="row" style="justify-content:space-between"><span>{{ nombre }}</span><span class="sub" style="margin:0">{{ n }}{% if loop.index > 1 and a.embudo[0][1] %} · {{ (100 * n / a.embudo[0][1])|round|int }}%{% endif %}</span></div>
+    <div class="bar"><i style="width:{{ (100 * n / tope)|round|int }}%"></i></div>
+  </div>
+  {% endfor %}
+</div>
+
+{{ tabla(a.por_tipo, 'Empleo vs freelance') }}
 {{ tabla(a.por_fuente, 'Por fuente') }}
+{{ tabla(a.por_modulo, 'Por tipo de trabajo') }}
+
+<h2>Skills del mercado vs tu perfil <span class="sub" style="font-weight:400">({{ gap.avisos }} avisos de los últimos 30 días)</span></h2>
+<div class="card">
+  <div class="sub" style="margin:0 0 6px">Las más pedidas que NO figuran en tu perfil (candidatas a aprender o a sumar a la memoria si ya las sabés)</div>
+  <div class="row">{% for k, n in gap.faltan %}<span class="badge w">{{ k }} · {{ n }}</span>{% else %}<span class="sub" style="margin:0">Nada relevante.</span>{% endfor %}</div>
+  <div class="sub" style="margin:12px 0 6px">Las más pedidas que ya tenés (destacalas en propuestas y CV)</div>
+  <div class="row">{% for k, n in gap.tenes %}<span class="badge s">{{ k }} · {{ n }}</span>{% else %}<span class="sub" style="margin:0">Nada todavía.</span>{% endfor %}</div>
+</div>
 {% endblock %}

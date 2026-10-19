@@ -1,24 +1,112 @@
 {% extends "base.html" %}
 {% block title %}Pipeline{% endblock %}
 
-{% macro tarjeta(t) %}
-<a class="card tk" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px">
-  <div style="font-weight:650;font-size:15px">{{ t['title'][:110] }}</div>
+{% macro monto(t) -%}
+  {%- if t['presupuesto_min'] or t['presupuesto_max'] -%}
+    {{ t['moneda'] or 'USD' }} {{ t['presupuesto_min'] or t['presupuesto_max'] }}{% if t['presupuesto_max'] and t['presupuesto_min'] and t['presupuesto_max'] != t['presupuesto_min'] %}–{{ t['presupuesto_max'] }}{% endif %}{% if t['periodo_pago'] == 'hora' %}/h{% elif t['periodo_pago'] == 'mes' %}/mes{% endif %}
+  {%- elif t['budget_usd'] -%}USD {{ t['budget_usd'] }}{%- endif -%}
+{%- endmacro %}
+
+{% macro tarjeta(t, acciones=True) %}
+{% set e = etapa_de(t) %}
+<div class="card tk" data-fp="{{ t['fingerprint'] }}" data-tipo="{{ t['tipo'] or 'freelance' }}"
+     data-q="{{ (t['title'] ~ ' ' ~ t['source'] ~ ' ' ~ (t['module'] or ''))|lower }}">
+  <a href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;font-weight:650;font-size:15px">{{ t['title'][:110] }}</a>
   <div class="row" style="margin-top:7px">
-    <span class="badge s">score {{ t['score'] }}</span>
-    {% if t['module'] %}<span class="badge">{{ t['module'] }}</span>{% endif %}
+    {% if t['score_oportunidad'] is not none %}<span class="badge s" title="Score de oportunidad (0-100): encaje, plata, tiempo, cliente, región, idioma">★ {{ t['score_oportunidad'] }}</span>{% endif %}
+    <span class="badge">{{ etiquetas[e] }}</span>
+    <span class="badge">{{ t['tipo'] or 'freelance' }}</span>
     <span class="badge">{{ t['source'] }}</span>
-    {% if t['budget_usd'] %}<span class="badge">USD {{ t['budget_usd'] }}</span>{% endif %}
+    {% set mm = monto(t) %}{% if mm %}<span class="badge">{{ mm }}</span>{% endif %}
+    {% if t['proxima_accion'] %}<span class="badge w">{{ t['proxima_accion'] }}{% if t['proxima_accion_at'] %} · {{ t['proxima_accion_at'][:10] }}{% endif %}</span>{% endif %}
     {% if t['notas'] %}<span class="badge w">con notas</span>{% endif %}
   </div>
-</a>
+  {% if acciones and e in ('relevada', 'interesa') %}
+  <div class="row" style="margin-top:9px">
+    {% if e == 'relevada' %}<button class="btn chico" data-mover="interesa">Me interesa</button>{% endif %}
+    <button class="btn chico" data-mover="postulada">Ya postulé</button>
+    <button class="btn chico" data-mover="descartada">Descartar</button>
+  </div>
+  {% endif %}
+</div>
 {% endmacro %}
 
 {% block body %}
 <h1>Pipeline</h1>
-<div class="sub">Lo que pasó el filtro, listo para postular. Tocá un ticket para ver la oferta completa y el pitch.</div>
 
-<div class="grid">
+<div class="card" id="meta">
+  <div class="row" style="justify-content:space-between;align-items:baseline">
+    <div><span style="font-size:26px;font-weight:800">USD {{ meta.confirmado }}</span>
+      <span class="sub" style="margin:0">confirmados{% if meta.ponderado %} + USD {{ meta.ponderado }} en camino (ponderado){% endif %} · meta USD {{ meta.objetivo }}</span></div>
+    <span class="badge">{{ meta.dias_restantes }} días restantes del mes</span>
+  </div>
+  <div class="bar" style="height:12px;display:flex">
+    <i style="width:{{ meta.pct_confirmado }}%"></i>
+    <i style="width:{{ meta.pct_ponderado }}%;background:repeating-linear-gradient(45deg,#2f6b47,#2f6b47 6px,#24543a 6px,#24543a 12px)"></i>
+  </div>
+  <div class="row" style="margin-top:10px;gap:6px">
+    {% if meta.cobrado %}<span class="badge s">cobrado USD {{ meta.cobrado }}</span>{% endif %}
+    {% if meta.acordado %}<span class="badge">acordado USD {{ meta.acordado }}</span>{% endif %}
+    {% if meta.estimado %}<span class="badge w" title="Ganadas sin ingreso cargado: cuentan por su presupuesto estimado">estimado USD {{ meta.estimado }}</span>{% endif %}
+    {% if meta.abiertas %}<span class="badge">{{ meta.abiertas }} postulaciones abiertas</span>{% endif %}
+  </div>
+  {% if meta.falta %}
+  <p style="margin:12px 0 0;font-size:15px">
+    Faltan <b>USD {{ meta.falta }}</b>. Con tickets de ~USD {{ meta.ticket_promedio }} y {{ (meta.tasa * 100)|round(1) }}% de cierre
+    {% if meta.tasa_real %}(tu tasa real){% else %}(supuesto: todavía no hay cierres propios){% endif %}
+    necesitás <b>~{{ meta.necesarias }} propuestas</b>: <b>{{ meta.por_dia }} por día</b>.
+    Hoy llevás <b>{{ meta.hoy }}</b>{% if meta.faltan_hoy %}: te faltan <b style="color:var(--warn)">{{ meta.faltan_hoy }}</b>{% else %} ✔{% endif %}.
+  </p>
+  {% else %}<p style="margin:12px 0 0">Meta cubierta este mes (confirmado + ponderado). Cerrá lo que está en camino.</p>{% endif %}
+  <details style="margin-top:10px"><summary class="sub" style="cursor:pointer;margin:0">Cargar un ingreso suelto</summary>
+    <div class="row" style="margin-top:8px">
+      <input id="ing-monto" type="number" min="1" placeholder="USD" style="width:110px">
+      <select id="ing-estado" style="width:130px"><option value="acordado">acordado</option><option value="cobrado">cobrado</option></select>
+      <input id="ing-detalle" type="text" placeholder="Detalle (cliente, proyecto)" style="flex:1 1 180px">
+      <button class="btn" id="ing-guardar">Guardar</button>
+    </div>
+    <div class="sub" style="margin:6px 0 0">Para un proyecto del pipeline, cargalo desde su detalle (queda vinculado).</div>
+  </details>
+</div>
+
+<h2>Hoy</h2>
+{% if hoy.acciones or seguimientos %}
+<div style="margin-bottom:8px">
+  {% macro seguimiento(t, numero, atraso) %}
+  <a class="card" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px;border-color:#5a4512">
+    <div style="font-weight:650;font-size:15px">{{ t['title'][:110] }}</div>
+    <div class="row" style="margin-top:7px">
+      <span class="badge w">seguimiento {{ numero }}</span>
+      <span class="badge">{% if atraso < 1 %}vence hoy{% else %}vencido hace {{ atraso|int }} d{% endif %}</span>
+      <span class="badge">{{ t['source'] }}</span>
+    </div>
+  </a>
+  {% endmacro %}
+  {% for t, numero, atraso in seguimientos[:3] %}{{ seguimiento(t, numero, atraso) }}{% endfor %}
+  {% if seguimientos|length > 3 %}
+  <details style="margin-bottom:8px"><summary class="sub" style="cursor:pointer;margin:0 0 8px">Ver {{ seguimientos|length - 3 }} seguimientos más</summary>
+    {% for t, numero, atraso in seguimientos[3:] %}{{ seguimiento(t, numero, atraso) }}{% endfor %}
+  </details>
+  {% endif %}
+  {% for t, atraso in hoy.acciones %}
+  <a class="card" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px;border-color:#5a4512">
+    <div style="font-weight:650;font-size:15px">{{ t['proxima_accion'] }} · {{ t['title'][:90] }}</div>
+    <div class="row" style="margin-top:7px">
+      <span class="badge w">{% if atraso >= 1 %}vencida hace {{ atraso }} d{% else %}para hoy{% endif %}</span>
+      <span class="badge">{{ etiquetas[etapa_de(t)] }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+<div class="sub" style="margin:4px 0 8px">Lo mejor para postular ahora, por score de oportunidad (★). Primero lo que marcaste "Me interesa".</div>
+<div id="lista-hoy">
+{% for t in hoy.postular %}{{ tarjeta(t) }}{% else %}
+  <div class="empty">No hay nada pendiente que pase el filtro.<br>Importá avisos desde <a href="{{ url_for('importar_page') }}" style="color:var(--acc)">Importar</a> o cargá uno en <a href="{{ url_for('agregar_page') }}" style="color:var(--acc)">Agregar</a>.</div>
+{% endfor %}
+</div>
+
+<div class="grid" style="margin-top:22px">
   <div class="card kpi">
     <div class="n">{{ m.enviadas_7d }}<span style="font-size:15px;color:var(--mut)"> / {{ m.objetivo_semanal }}</span></div>
     <div class="t">propuestas enviadas (7 días)</div>
@@ -27,56 +115,42 @@
   <div class="card kpi"><div class="n">{{ m.pendientes }}</div><div class="t">pendientes por postular</div></div>
   <div class="card kpi"><div class="n">{{ m.racha_dias }}<span style="font-size:15px;color:var(--mut)"> días</span></div><div class="t">racha postulando</div></div>
   <div class="card kpi"><div class="n">{{ m.tasa_respuesta }}%</div><div class="t">tasa de respuesta ({{ m.respondidas }} de {{ m.enviadas_total }})</div></div>
-  <div class="card kpi">
-    <div class="n">USD {{ m.facturado_mes_usd }}<span style="font-size:15px;color:var(--mut)"> / {{ m.meta_mensual_usd }}</span></div>
-    <div class="t">ganado este mes (según presupuesto)</div>
-    <div class="bar"><i style="width:{{ [100, (100 * m.facturado_mes_usd / m.meta_mensual_usd)|round|int]|min if m.meta_mensual_usd else 0 }}%"></i></div>
-  </div>
-  <div class="card kpi">
-    <div class="n">USD {{ m.neto_mes_usd }}{% if m.costos_mes_usd %}<span style="font-size:15px;color:var(--mut)"> (−{{ m.costos_mes_usd }} costos)</span>{% endif %}</div>
-    <div class="t">neto este mes (facturado − costos)</div>
-  </div>
 </div>
 
-<div class="row" style="margin:22px 0 12px" id="tabs">
-  {% for e, etiqueta in [('nuevo','Pendientes'),('postulado','Postulados'),('respondido','Respondidos'),('ganado','Ganados'),('perdido','Perdidos')] %}
-    <button class="btn" data-tab="{{ e }}">{{ etiqueta }} <span class="badge">{{ pipeline[e]|length }}</span></button>
+{% set grupos = [
+  ('pendientes', 'Por postular', ['interesa', 'relevada']),
+  ('postuladas', 'Postuladas', ['postulada']),
+  ('proceso', 'En proceso', ['en_proceso', 'entrevista', 'oferta']),
+  ('ganadas', 'Ganadas', ['ganada']),
+  ('cerradas', 'Cerradas', ['rechazada', 'sin_respuesta', 'descartada']),
+] %}
+<div class="row" style="margin:22px 0 10px" id="tabs">
+  {% for clave, etiqueta, es in grupos %}
+    {% set n = namespace(v=0) %}{% for x in es %}{% set n.v = n.v + t.por_etapa[x]|length %}{% endfor %}
+    <button class="btn" data-tab="{{ clave }}">{{ etiqueta }} <span class="badge">{{ n.v }}</span></button>
   {% endfor %}
-  <button class="btn" data-tab="seguimiento">Seguimiento <span class="badge {% if seguimientos %}w{% endif %}">{{ seguimientos|length }}</span></button>
   <button class="btn" data-tab="revisar">Para revisar <span class="badge">{{ revisar|length }}</span></button>
 </div>
+<div class="row" style="margin-bottom:12px">
+  <input id="buscar" type="search" placeholder="Buscar por título, fuente o módulo" style="flex:1 1 220px">
+  <select id="filtro-tipo" style="width:150px"><option value="">Empleo y freelance</option><option value="freelance">Solo freelance</option><option value="empleo">Solo empleo</option></select>
+</div>
 
-{% for e in estados %}
-<section data-panel="{{ e }}" hidden>
-  {% for t in pipeline[e] %}{{ tarjeta(t) }}
-  {% else %}
-    <div class="empty">
-      {% if e == 'nuevo' %}Nada pendiente que pase el filtro ahora.<br>Si encontraste una oferta por tu cuenta, cargala en <a href="{{ url_for('agregar_page') }}" style="color:var(--acc)">Agregar</a>.
-      {% else %}Vacío por ahora.{% endif %}
-    </div>
-  {% endfor %}
+{% for clave, etiqueta, es in grupos %}
+<section data-panel="{{ clave }}" hidden>
+  {% set n = namespace(v=0) %}
+  {% for x in es %}{% for r in t.por_etapa[x] %}{% set n.v = n.v + 1 %}{{ tarjeta(r) }}{% endfor %}{% endfor %}
+  {% if not n.v %}<div class="empty">Vacío por ahora.</div>{% endif %}
 </section>
 {% endfor %}
 
-<section data-panel="seguimiento" hidden>
-  <p class="sub">Postulaciones sin respuesta: seguimiento 1 a las 48 h, seguimiento 2 a los 6 días. Máximo 2; después, silencio.</p>
-  {% for t, numero, atraso in seguimientos %}
-  <a class="card" href="{{ url_for('ticket', fp=t['fingerprint']) }}" style="display:block;text-decoration:none;margin-bottom:8px">
-    <div style="font-weight:650;font-size:15px">{{ t['title'][:110] }}</div>
-    <div class="row" style="margin-top:7px">
-      <span class="badge w">seguimiento {{ numero }}</span>
-      <span class="badge">{% if atraso < 1 %}vence hoy{% else %}vencido hace {{ atraso|int }} d{% endif %}</span>
-      <span class="badge">{{ t['source'] }}</span>
-    </div>
-  </a>
-  {% else %}<div class="empty">No hay seguimientos pendientes.</div>{% endfor %}
-</section>
-
 <section data-panel="revisar" hidden>
   <p class="sub">Quedaron cerca del umbral pero sin killers ni problemas de presupuesto. Vale una mirada rápida.</p>
-  {% for t in revisar %}{{ tarjeta(t) }}
+  {% for r in revisar %}{{ tarjeta(r, acciones=False) }}
   {% else %}<div class="empty">Nada cerca del umbral.</div>{% endfor %}
 </section>
+
+<p class="sub" style="margin-top:20px"><a href="{{ url_for('exportar') }}" style="color:var(--mut)">Descargar el pipeline en CSV</a></p>
 {% endblock %}
 
 {% block js %}
@@ -90,6 +164,36 @@
   }
   tabs.forEach(b => b.addEventListener('click', () => ir(b.dataset.tab)));
   const inicial = location.hash.slice(1);
-  ir(tabs.some(b => b.dataset.tab === inicial) ? inicial : 'nuevo');
+  ir(tabs.some(b => b.dataset.tab === inicial) ? inicial : 'pendientes');
+
+  function filtrar(){
+    const q = document.getElementById('buscar').value.trim().toLowerCase();
+    const tipo = document.getElementById('filtro-tipo').value;
+    document.querySelectorAll('.tk').forEach(c => {
+      c.hidden = (q && !c.dataset.q.includes(q)) || (tipo && c.dataset.tipo !== tipo);
+    });
+  }
+  document.getElementById('buscar').addEventListener('input', filtrar);
+  document.getElementById('filtro-tipo').addEventListener('change', filtrar);
+
+  document.addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-mover]');
+    if (!b) return;
+    const card = b.closest('[data-fp]');
+    b.disabled = true;
+    try {
+      await api('/api/etapa', {fingerprint: card.dataset.fp, etapa: b.dataset.mover});
+      document.querySelectorAll(`[data-fp="${card.dataset.fp}"]`).forEach(c => c.remove());
+      toast({interesa: 'Marcada: me interesa', postulada: 'Postulada: seguimiento agendado', descartada: 'Descartada'}[b.dataset.mover]);
+    } catch (e) { toast(e.message); b.disabled = false; }
+  });
+
+  document.getElementById('ing-guardar').onclick = async () => {
+    try {
+      await api('/api/ingreso', {monto_usd: document.getElementById('ing-monto').value,
+        estado: document.getElementById('ing-estado').value, detalle: document.getElementById('ing-detalle').value});
+      toast('Ingreso guardado'); setTimeout(() => location.reload(), 700);
+    } catch (e) { toast(e.message); }
+  };
 </script>
 {% endblock %}

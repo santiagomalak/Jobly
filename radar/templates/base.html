@@ -39,6 +39,7 @@
   .btn.primary { background:var(--acc); border-color:var(--acc); color:#04140a; font-weight:700; }
   .btn.primary:hover { background:#34d673; }
   .btn.on { border-color:var(--acc); color:var(--acc); }
+  .btn.chico { padding:6px 10px; font-size:13px; border-radius:8px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .badge { background:#1f2430; color:var(--mut); border-radius:20px; padding:2px 9px; font-size:12px; white-space:nowrap; }
   .badge.s { color:var(--acc); } .badge.w { color:var(--warn); }
@@ -60,6 +61,7 @@
   <a class="logo" href="{{ url_for('index') }}">Job<span>ly</span></a>
   <a class="l {% if request.endpoint=='index' %}on{% endif %}" href="{{ url_for('index') }}">Pipeline</a>
   <a class="l {% if request.endpoint=='ask_page' %}on{% endif %}" href="{{ url_for('ask_page') }}">Preguntar</a>
+  <a class="l {% if request.endpoint=='importar_page' %}on{% endif %}" href="{{ url_for('importar_page') }}">Importar</a>
   <a class="l {% if request.endpoint=='agregar_page' %}on{% endif %}" href="{{ url_for('agregar_page') }}">Agregar</a>
   <a class="l {% if request.endpoint=='analitica_page' %}on{% endif %}" href="{{ url_for('analitica_page') }}">Analítica</a>
   <form method="post" action="{{ url_for('logout') }}"><button class="btn" style="padding:6px 10px;font-size:13px">Salir</button></form>
