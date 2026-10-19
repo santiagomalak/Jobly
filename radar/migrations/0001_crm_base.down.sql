@@ -1,0 +1,33 @@
+-- Vuelta atrás de 0001. Los datos cargados en las tablas/columnas nuevas se pierden.
+DROP INDEX IF EXISTS idx_tickets_oportunidad;
+DROP INDEX IF EXISTS idx_tickets_import;
+DROP INDEX IF EXISTS idx_tickets_postulado;
+DROP INDEX IF EXISTS idx_tickets_etapa_accion;
+DROP INDEX IF EXISTS idx_tickets_clave_norm;
+DROP INDEX IF EXISTS idx_tickets_url_norm;
+ALTER TABLE tickets DROP COLUMN import_id;
+ALTER TABLE tickets DROP COLUMN proxima_accion_at;
+ALTER TABLE tickets DROP COLUMN proxima_accion;
+ALTER TABLE tickets DROP COLUMN score_detalle;
+ALTER TABLE tickets DROP COLUMN score_oportunidad;
+ALTER TABLE tickets DROP COLUMN propuestas_recibidas;
+ALTER TABLE tickets DROP COLUMN idioma;
+ALTER TABLE tickets DROP COLUMN duracion_dias;
+ALTER TABLE tickets DROP COLUMN periodo_pago;
+ALTER TABLE tickets DROP COLUMN moneda;
+ALTER TABLE tickets DROP COLUMN presupuesto_max;
+ALTER TABLE tickets DROP COLUMN presupuesto_min;
+ALTER TABLE tickets DROP COLUMN clave_norm;
+ALTER TABLE tickets DROP COLUMN url_norm;
+ALTER TABLE tickets DROP COLUMN etapa;
+ALTER TABLE tickets DROP COLUMN tipo;
+ALTER TABLE tickets DROP COLUMN empresa_id;
+DROP TABLE IF EXISTS login_intentos;
+DROP TABLE IF EXISTS mapeos_csv;
+DROP TABLE IF EXISTS importaciones;
+DROP INDEX IF EXISTS idx_ingresos_ticket;
+DROP INDEX IF EXISTS idx_ingresos_fecha;
+DROP TABLE IF EXISTS ingresos;
+DROP INDEX IF EXISTS idx_eventos_ticket;
+DROP TABLE IF EXISTS eventos;
+DROP TABLE IF EXISTS empresas

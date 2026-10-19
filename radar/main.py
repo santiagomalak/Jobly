@@ -8,6 +8,8 @@
   python -m radar.main marcar <fingerprint> <estado>  # nuevo|postulado|respondido|ganado|perdido
   python -m radar.main ask "<pregunta>" [--max-chars N] [--oferta "<texto>"]  # responde con tu contexto
   python -m radar.main serve          # CRM web local en http://127.0.0.1:8000
+  python -m radar.main migrate        # aplica migraciones pendientes (también pasa solo al abrir la base)
+  python -m radar.main migrate --down N   # revierte hasta dejar la versión N (hacé backup antes)
 """
 from __future__ import annotations
 
@@ -20,10 +22,11 @@ import time
 import webbrowser
 from pathlib import Path
 
-from . import ask, db, llm, notify
+from . import ask, db, fit, llm, migraciones, notify
 from .config import discord_webhook, load_config
 from .memory import Memory
 from .models import Ticket
+from .oportunidad import calcular
 from .pitch import build_pitch
 from .scoring import score_ticket
 from .sources import collect
@@ -72,6 +75,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         score_ticket(t, taxonomy, cfg)
         (aprobados if t.verdict == "pass" else descartados).append(t)
 
+    perfil = fit.texto_perfil(mem)
+    for t in aprobados:
+        t.score_oportunidad, t.score_detalle = calcular(t, perfil, cfg)
     aprobados.sort(key=lambda x: x.score, reverse=True)
     aprobados = aprobados[: int(cfg.get("max_tickets_per_run", 12))]
     log.info("%d tickets pasaron el filtro", len(aprobados))
@@ -103,6 +109,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         notify.send_summary(
             discord_webhook("radar") or webhook, len(tickets), len(nuevos), enviados, errores
         )
+        cerradas = store.cerrar_sin_respuesta()
+        vencidos = store.seguimientos_pendientes()
+        if vencidos or cerradas:
+            crm = os.environ.get("JOBLY_URL", "").strip().rstrip("/")
+            lineas = [f"• {r['title'][:80]} — seguimiento {n}" for r, n, _ in vencidos[:10]]
+            if cerradas:
+                lineas.append(f"• {cerradas} postulación(es) pasaron a «sin respuesta» tras 2 seguimientos")
+            notify.post(discord_webhook("radar") or webhook, {
+                "username": "Jobly",
+                "content": f"**Hoy: {len(vencidos)} seguimiento(s) vencido(s)**\n" + "\n".join(lineas)
+                           + (f"\n{crm}/" if crm else ""),
+                "allowed_mentions": {"parse": []},
+            })
     log.info("listo · enviados=%d errores=%d", enviados, len(errores))
     store.close()
     return 0
@@ -277,6 +296,19 @@ def cmd_test_discord(_: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    conn = db.connect(Path(cfg["root"]) / cfg["db_path"])
+    destino = "Turso" if db.remoto_configurado() else cfg["db_path"]
+    if args.down is not None:
+        hechas = migraciones.revertir(conn, args.down)
+        print(f"[{destino}] revertidas: {hechas or 'ninguna'} · versión actual {migraciones.version_actual(conn)}")
+    else:
+        hechas = migraciones.aplicar(conn)
+        print(f"[{destino}] aplicadas: {hechas or 'ninguna'} · versión actual {migraciones.version_actual(conn)}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="radar")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -303,6 +335,10 @@ def main() -> int:
     p_marcar.add_argument("fingerprint")
     p_marcar.add_argument("estado", choices=ESTADOS)
     p_marcar.set_defaults(func=cmd_marcar)
+
+    p_mig = sub.add_parser("migrate", help="aplica (o revierte con --down N) migraciones de la base")
+    p_mig.add_argument("--down", type=int, default=None, help="revertir hasta dejar esta versión")
+    p_mig.set_defaults(func=cmd_migrate)
 
     p_pitch = sub.add_parser("pitch", help="regenera el pitch de un ticket guardado")
     p_pitch.add_argument("url")

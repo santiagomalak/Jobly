@@ -186,7 +186,7 @@ def transaccion(conn: Any, sentencias: list[tuple[str, Sequence[Any]]]) -> list[
     conn.execute("BEGIN")
     try:
         for sql, args in sentencias:
-            cursores.append(conn.execute(sql, args))
+            cursores.append(_Cursor(conn.execute(sql, args).fetchall()))
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
