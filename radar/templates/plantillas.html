@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Propuestas{% endblock %}
+
+{% block body %}
+<h1>Biblioteca de propuestas</h1>
+<div class="sub">Tus textos que funcionan, listos para usar desde cada ticket. Cada envío anota qué plantilla usaste, así ves cuál consigue respuestas. La tasa se vuelve confiable desde 5 envíos.</div>
+
+<h2>Plantillas</h2>
+{% for p in plantillas %}
+<div class="card" style="margin-bottom:10px">
+  <div class="row" style="justify-content:space-between;gap:8px">
+    <div>
+      <b>{{ p.nombre }}</b>
+      <span class="badge">{{ p.tipo }}</span> <span class="badge">{{ p.idioma|upper }}</span>
+    </div>
+    <div class="row" style="gap:6px">
+      <button class="btn chico" data-editar="{{ p.id }}">Editar</button>
+      <button class="btn chico" data-borrar="{{ p.id }}">Borrar</button>
+    </div>
+  </div>
+  {% if p.tipo != 'seguimiento' %}
+  <div class="sub" style="margin:8px 0 0">
+    {{ p.envios }} envío{{ '' if p.envios == 1 else 's' }}
+    {% if p.envios %}· <span class="badge {% if p.confiable and p.tasa >= (base.tasa or 0) %}s{% elif p.confiable %}w{% endif %}">{{ p.tasa }}% respuesta</span> · {{ p.ganadas }} ganada{{ '' if p.ganadas == 1 else 's' }}{% endif %}
+    {% if not p.confiable %}· pocos datos todavía{% endif %}
+  </div>
+  {% endif %}
+  <details style="margin-top:8px"><summary class="sub" style="cursor:pointer;margin:0">Ver texto</summary>
+    <pre style="white-space:pre-wrap;margin:8px 0 0;font:inherit">{{ p.cuerpo }}</pre>
+  </details>
+</div>
+{% else %}
+<div class="card">
+  <div>Todavía no hay plantillas.</div>
+  <div class="sub" style="margin:6px 0 10px">Podés cargar las de tu memoria (maestra ES/EN/PT y los 2 seguimientos) y adaptarlas, o escribir una abajo.</div>
+  <button class="btn primary" id="cargar-base">Cargar las de memoria/06</button>
+</div>
+{% endfor %}
+{% if plantillas %}
+<div class="sub" style="margin:4px 0 0">Sin plantilla (pitch de IA o a mano): {{ base.envios }} envíos{% if base.envios %} · {{ base.tasa }}% respuesta · {{ base.ganadas }} ganadas{% endif %}. Es la línea de base para comparar.</div>
+{% endif %}
+
+<h2 id="form-titulo">Nueva plantilla</h2>
+<div class="card">
+  <input type="hidden" id="pid">
+  <div class="row" style="gap:8px">
+    <input id="nombre" type="text" maxlength="80" placeholder="Nombre, ej.: n8n integración ES" style="flex:1 1 220px">
+    <select id="tipo">{% for t in tipos %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+    <select id="idioma">{% for i in idiomas %}<option value="{{ i }}">{{ i|upper }}</option>{% endfor %}</select>
+  </div>
+  <textarea id="cuerpo" rows="12" maxlength="6000" style="margin-top:8px" placeholder="Texto de la propuesta…"></textarea>
+  <div class="sub" style="margin:6px 0 10px">Se rellenan solas: {% for v in variables %}<code>{{ '{' ~ v ~ '}' }}</code> {% endfor %}. Lo que pongas entre &lt;…&gt; queda marcado para completar a mano antes de enviar.</div>
+  <div class="row" style="gap:8px">
+    <button class="btn primary" id="guardar">Guardar</button>
+    <button class="btn" id="cancelar" hidden>Cancelar edición</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  const $ = id => document.getElementById(id);
+  const PLANTILLAS = {{ plantillas|tojson }};
+
+  const base = $('cargar-base');
+  if (base) base.onclick = async () => {
+    base.disabled = true;
+    try { const r = await api('/api/plantillas/base', {}); toast(r.cargadas + ' plantillas cargadas'); setTimeout(() => location.reload(), 700); }
+    catch (e) { toast(e.message); base.disabled = false; }
+  };
+
+  function limpiar() {
+    $('pid').value = ''; $('nombre').value = ''; $('cuerpo').value = '';
+    $('form-titulo').textContent = 'Nueva plantilla'; $('cancelar').hidden = true;
+  }
+  $('cancelar').onclick = limpiar;
+
+  document.querySelectorAll('[data-editar]').forEach(b => b.onclick = () => {
+    const p = PLANTILLAS.find(x => x.id == b.dataset.editar);
+    $('pid').value = p.id; $('nombre').value = p.nombre; $('tipo').value = p.tipo;
+    $('idioma').value = p.idioma; $('cuerpo').value = p.cuerpo;
+    $('form-titulo').textContent = 'Editar: ' + p.nombre; $('cancelar').hidden = false;
+    $('form-titulo').scrollIntoView({behavior: 'smooth'});
+  });
+
+  // Borrar pide un segundo toque (sin diálogos del navegador).
+  document.querySelectorAll('[data-borrar]').forEach(b => b.onclick = async () => {
+    if (!b.dataset.armado) { b.dataset.armado = '1'; b.textContent = '¿Seguro?'; setTimeout(() => { delete b.dataset.armado; b.textContent = 'Borrar'; }, 3000); return; }
+    try { await api('/api/plantillas/' + b.dataset.borrar + '/borrar', {}); location.reload(); }
+    catch (e) { toast(e.message); }
+  });
+
+  $('guardar').onclick = async () => {
+    try {
+      await api('/api/plantillas', {id: $('pid').value, nombre: $('nombre').value, tipo: $('tipo').value,
+                                    idioma: $('idioma').value, cuerpo: $('cuerpo').value});
+      toast('Plantilla guardada'); setTimeout(() => location.reload(), 600);
+    } catch (e) { toast(e.message); }
+  };
+</script>
+{% endblock %}

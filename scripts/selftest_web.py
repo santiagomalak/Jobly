@@ -368,10 +368,10 @@ def test_crm(path: Path) -> None:
 
     s = Store(path)
     cols_antes = [r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()]
-    check(migraciones.version_actual(s.conn) == 1 and "etapa" in cols_antes, "la migración 0001 se aplica sola al abrir la base")
+    check(migraciones.version_actual(s.conn) == 2 and "etapa" in cols_antes and "plantilla_id" in cols_antes, "las migraciones se aplican solas al abrir la base")
     migraciones.revertir(s.conn, 0)
     cols_down = [r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()]
-    check("etapa" not in cols_down and "costo_usd" in cols_down, "migrate --down 0 deja el esquema anterior")
+    check("etapa" not in cols_down and "plantilla_id" not in cols_down and "costo_usd" in cols_down, "migrate --down 0 deja el esquema anterior")
     migraciones.aplicar(s.conn)
     check([r["name"] for r in s.conn.execute("PRAGMA table_info(tickets)").fetchall()] == cols_antes, "y volver a subir deja el esquema idéntico")
 
@@ -488,6 +488,51 @@ def test_web_crm(path: Path) -> None:
     check("Embudo" in an and "Skills del mercado" in an, "analítica con embudo y gap de skills")
 
 
+def test_plantillas(path: Path) -> None:
+    print("Web: biblioteca de propuestas")
+    os.environ["JOBLY_PASSWORD"] = "clave-de-prueba"
+    c = create_app(db_path=path).test_client()
+    c.post("/login", data={"password": "clave-de-prueba"}, headers={"X-Real-IP": "7.7.7.7"})
+    check("Cargar las de memoria/06" in c.get("/plantillas").get_data(as_text=True), "sin plantillas ofrece cargar las de la memoria")
+    r = c.post("/api/plantillas/base", json={})
+    check(r.json["cargadas"] == 5, "carga maestra ES/EN/PT y 2 seguimientos")
+    check(c.post("/api/plantillas/base", json={}).json["cargadas"] == 0, "cargar dos veces no duplica")
+    pagina = c.get("/plantillas").get_data(as_text=True)
+    check("Maestra freelance ES" in pagina and "[PLAN]" not in pagina, "las plantillas se ven sin los rótulos internos")
+    check(c.post("/api/plantillas", json={"nombre": "", "cuerpo": "x"}).status_code == 400, "plantilla sin nombre rechazada")
+    check(c.post("/api/plantillas", json={"nombre": "x", "tipo": "spam", "cuerpo": "x"}).status_code == 400, "tipo inválido rechazado")
+    pid = c.post("/api/plantillas", json={"nombre": "Corta", "tipo": "freelance", "idioma": "es",
+                                          "cuerpo": "Hola {empresa}: vi «{titulo}» ({presupuesto}). <link>"}).json["id"]
+
+    s = Store(path)
+    t = Ticket(source="workana", title="Bot de WhatsApp", url="https://workana.com/job/bot", description="n8n",
+               module="AUTOMATION", score=70, verdict="pass", extra={"empresa": "Acme"})
+    s.save_many([(t, False)])
+    s.conn.execute("UPDATE tickets SET presupuesto_min = 200, presupuesto_max = 300, moneda = 'USD' WHERE fingerprint = ?", (t.fingerprint,))
+    s.conn.commit()
+    s.close()
+    fp = t.fingerprint
+    check("Usar plantilla" in c.get(f"/ticket/{fp}").get_data(as_text=True), "el ticket ofrece usar una plantilla")
+    r = c.post("/api/plantilla/usar", json={"fingerprint": fp, "id": pid})
+    check(r.json["texto"] == "Hola Acme: vi «Bot de WhatsApp» (USD 200–300). <link>", "rellena empresa, título y presupuesto")
+    check(r.json["pendientes"] == ["<link>"], "avisa los huecos a completar a mano")
+    check(c.post("/api/plantilla/usar", json={"fingerprint": fp, "id": 9999}).status_code == 404, "plantilla inexistente: 404")
+    c.post("/api/etapa", json={"fingerprint": fp, "etapa": "postulada"})
+    c.post("/api/etapa", json={"fingerprint": fp, "etapa": "en_proceso"})
+    from radar import plantillas as pl
+    s = Store(path)
+    corta = next(p for p in pl.listar(s.conn) if p["id"] == pid)
+    check(corta["envios"] == 1 and corta["respuestas"] == 1 and corta["tasa"] == 100 and not corta["confiable"],
+          "la plantilla suma el envío y la respuesta (con aviso de pocos datos)")
+    check(s.get(fp)["pitch"].startswith("Hola Acme"), "el texto aplicado queda guardado como pitch")
+    s.close()
+    c.post(f"/api/plantillas/{pid}/borrar", json={})
+    s = Store(path)
+    check(s.get(fp)["plantilla_id"] is None and pl.obtener(s.conn, pid) is None, "borrar la plantilla deja el envío como 'sin plantilla'")
+    check(pl.sin_plantilla(s.conn)["envios"] == 1, "y pasa a contar en la línea de base")
+    s.close()
+
+
 def main() -> int:
     test_turso_adapter()
     test_fuentes()
@@ -498,6 +543,7 @@ def main() -> int:
         test_web(Path(tmp) / "b.sqlite")
         test_crm(Path(tmp) / "c.sqlite")
         test_web_crm(Path(tmp) / "d.sqlite")
+        test_plantillas(Path(tmp) / "e.sqlite")
     print("\n✅ selftest_web OK")
     return 0
 

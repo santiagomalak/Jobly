@@ -22,6 +22,7 @@ from flask import Flask, Response, abort, g, jsonify, redirect, render_template,
 
 from . import ask as asistente
 from . import copiloto, db, fit, importador
+from . import plantillas as plantillas_mod
 from . import etapas as et
 from . import normalizar as norm
 from . import icono as icono_mod
@@ -273,6 +274,8 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             "ticket.html", t=row, d=datos, etapa=etapa_de(row), etapas=et.ETAPAS, etiquetas=et.ETIQUETAS,
             datos_oferta=_datos_oferta(datos.get("tags", [])) + _datos_extra(tk.extra), seguimiento_debido=debido,
             encaje=fit.analizar(tk, memoria()), detalle_score=detalle_score,
+            plantillas=plantillas_mod.listar(store().conn, "empleo" if row["tipo"] == "empleo" else "freelance"),
+            plantillas_seg=plantillas_mod.listar(store().conn, "seguimiento") if debido else [],
             eventos=det["eventos"], ingresos=det["ingresos"], hoy=(ahora - timedelta(hours=3)).date().isoformat(),
         )
 
@@ -390,6 +393,7 @@ def create_app(db_path: str | Path | None = None) -> Flask:
         t = _ticket_desde_fila(store().get(fp))
         build_pitch(t, memoria())
         store().set_pitch(fp, t.pitch, t.pitch_engine)
+        plantillas_mod.asignar(store().conn, fp, None)  # el pitch ya no sale de una plantilla
         return jsonify(pitch=t.pitch, engine=t.pitch_engine)
 
     @app.post("/api/seguimiento")
@@ -615,5 +619,55 @@ def create_app(db_path: str | Path | None = None) -> Flask:
             return jsonify(ok=True, **_importacion().deshacer(iid))
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
+
+    # ---------- biblioteca de propuestas ----------
+    @app.get("/plantillas")
+    def plantillas_page():
+        conn = store().conn
+        return render_template(
+            "plantillas.html", plantillas=plantillas_mod.listar(conn), base=plantillas_mod.sin_plantilla(conn),
+            tipos=plantillas_mod.TIPOS, idiomas=plantillas_mod.IDIOMAS, variables=plantillas_mod.VARIABLES,
+        )
+
+    @app.post("/api/plantillas")
+    def api_plantilla_guardar():
+        datos = request.get_json(silent=True) or {}
+        try:
+            pid = int(datos.get("id") or 0) or None
+            pid = plantillas_mod.guardar(
+                store().conn, str(datos.get("nombre", "")), str(datos.get("tipo", "freelance")),
+                str(datos.get("idioma", "es")), str(datos.get("cuerpo", "")), pid,
+            )
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        return jsonify(ok=True, id=pid)
+
+    @app.post("/api/plantillas/<int:pid>/borrar")
+    def api_plantilla_borrar(pid: int):
+        plantillas_mod.borrar(store().conn, pid)
+        return jsonify(ok=True)
+
+    @app.post("/api/plantillas/base")
+    def api_plantillas_base():
+        return jsonify(ok=True, cargadas=plantillas_mod.cargar_base(store().conn, root / cfg["memory_dir"]))
+
+    @app.post("/api/plantilla/usar")
+    def api_plantilla_usar():
+        """Rellena la plantilla con los datos del ticket. Si es una propuesta, queda como pitch
+        y se anota qué plantilla se usó para medir su tasa de respuesta."""
+        datos = request.get_json(silent=True) or {}
+        fp = _fp_valido(datos)
+        try:
+            p = plantillas_mod.obtener(store().conn, int(datos.get("id") or 0))
+        except (TypeError, ValueError):
+            p = None
+        fila = store().get(fp)
+        if p is None or fila is None:
+            return jsonify(error="Plantilla o ticket inexistente"), 404
+        texto = plantillas_mod.rellenar(p["cuerpo"], plantillas_mod.valores(fila))
+        if p["tipo"] != "seguimiento":
+            store().set_pitch(fp, texto, "biblioteca")
+            plantillas_mod.asignar(store().conn, fp, p["id"])
+        return jsonify(ok=True, texto=texto, pendientes=plantillas_mod.pendientes(texto), nombre=p["nombre"])
 
     return app

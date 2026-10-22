@@ -60,6 +60,7 @@
 <nav>
   <a class="logo" href="{{ url_for('index') }}">Job<span>ly</span></a>
   <a class="l {% if request.endpoint=='index' %}on{% endif %}" href="{{ url_for('index') }}">Pipeline</a>
+  <a class="l {% if request.endpoint=='plantillas_page' %}on{% endif %}" href="{{ url_for('plantillas_page') }}">Propuestas</a>
   <a class="l {% if request.endpoint=='ask_page' %}on{% endif %}" href="{{ url_for('ask_page') }}">Preguntar</a>
   <a class="l {% if request.endpoint=='importar_page' %}on{% endif %}" href="{{ url_for('importar_page') }}">Importar</a>
   <a class="l {% if request.endpoint=='agregar_page' %}on{% endif %}" href="{{ url_for('agregar_page') }}">Agregar</a>

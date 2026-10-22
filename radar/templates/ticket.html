@@ -45,6 +45,22 @@
     <button class="btn" id="regen">{% if t['pitch'] %}Regenerar{% else %}Generar pitch{% endif %}</button>
     <span class="sub" style="margin:0">Editalo antes de copiar: es un borrador, el envío lo decidís vos.</span>
   </div>
+  <div class="row" style="margin-top:10px;gap:8px">
+    {% if plantillas %}
+    <select id="plantilla" style="flex:1 1 200px">
+      {% for p in plantillas %}<option value="{{ p.id }}" {% if t['plantilla_id'] == p.id %}selected{% endif %}>{{ p.nombre }} · {{ p.idioma|upper }}{% if p.confiable %} · {{ p.tasa }}% resp.{% elif p.envios %} · {{ p.envios }} envíos{% endif %}</option>{% endfor %}
+    </select>
+    <button class="btn" id="usar-plantilla">Usar plantilla</button>
+    {% else %}
+    <span class="sub" style="margin:0">Sin plantillas todavía: <a href="{{ url_for('plantillas_page') }}">cargalas acá</a>.</span>
+    {% endif %}
+    <button class="btn" id="guardar-plantilla">Guardar como plantilla</button>
+  </div>
+  <div class="row" id="nueva-plantilla" style="margin-top:8px;gap:8px" hidden>
+    <input id="np-nombre" type="text" maxlength="80" placeholder="Nombre de la plantilla" style="flex:1 1 220px">
+    <button class="btn primary" id="np-ok">Guardar</button>
+  </div>
+  {% if t['plantilla_id'] %}<div class="sub" style="margin:8px 0 0">Este pitch sale de una plantilla de tu biblioteca: su respuesta cuenta para la tasa de esa plantilla.</div>{% endif %}
 </div>
 
 {% if seguimiento_debido %}
@@ -55,6 +71,10 @@
     <button class="btn primary" id="seg-gen">Generar</button>
     <button class="btn" id="seg-copiar">Copiar</button>
     <button class="btn" id="seg-hecho">Ya lo mandé</button>
+    {% if plantillas_seg %}
+    <select id="seg-plantilla">{% for p in plantillas_seg %}<option value="{{ p.id }}">{{ p.nombre }}</option>{% endfor %}</select>
+    <button class="btn" id="seg-usar">Usar plantilla</button>
+    {% endif %}
   </div>
 </div>
 {% endif %}
@@ -155,7 +175,37 @@
 <script>
   const FP = {{ t['fingerprint']|tojson }};
   const $ = id => document.getElementById(id);
-  $('copiar').onclick = () => copiar($('pitch').value);
+  const TIPO = {{ (t['tipo'] or 'freelance')|tojson }};
+  const HUECOS = /<[^<>\n]{1,60}>|\[COMPLETAR[^\]]*\]/g;
+  // Avisa si quedaron huecos sin completar; el segundo toque copia igual.
+  function copiarRevisado(btn, texto) {
+    const h = texto.match(HUECOS);
+    if (h && !btn.dataset.forzar) {
+      btn.dataset.forzar = '1'; setTimeout(() => delete btn.dataset.forzar, 4000);
+      toast('Falta completar: ' + [...new Set(h)].slice(0, 3).join(', ') + ' (tocá de nuevo para copiar igual)');
+      return;
+    }
+    delete btn.dataset.forzar; copiar(texto);
+  }
+  $('copiar').onclick = ev => copiarRevisado(ev.currentTarget, $('pitch').value);
+
+  async function usarPlantilla(id, destino) {
+    const r = await api('/api/plantilla/usar', {fingerprint: FP, id: id});
+    $(destino).value = r.texto;
+    if (destino === 'pitch') $('motor').textContent = 'biblioteca';
+    toast(r.pendientes.length ? 'Completá: ' + [...new Set(r.pendientes)].slice(0, 3).join(', ') : 'Plantilla aplicada: ' + r.nombre);
+  }
+  if ($('usar-plantilla')) $('usar-plantilla').onclick = async () => {
+    try { await usarPlantilla($('plantilla').value, 'pitch'); } catch (e) { toast(e.message); }
+  };
+  $('guardar-plantilla').onclick = () => { $('nueva-plantilla').hidden = false; $('np-nombre').focus(); };
+  $('np-ok').onclick = async () => {
+    try {
+      await api('/api/plantillas', {nombre: $('np-nombre').value, tipo: TIPO === 'empleo' ? 'empleo' : 'freelance',
+                                    idioma: 'es', cuerpo: $('pitch').value});
+      toast('Guardada en tu biblioteca (podés cambiarle el idioma en Propuestas)'); $('nueva-plantilla').hidden = true;
+    } catch (e) { toast(e.message); }
+  };
 
   document.querySelectorAll('[data-etapa]').forEach(b => b.onclick = async () => {
     try {
@@ -189,7 +239,10 @@
       catch (e) { toast(e.message); }
       segGen.disabled = false; segGen.textContent = 'Generar';
     };
-    $('seg-copiar').onclick = () => copiar($('seg').value);
+    $('seg-copiar').onclick = ev => copiarRevisado(ev.currentTarget, $('seg').value);
+    if ($('seg-usar')) $('seg-usar').onclick = async () => {
+      try { await usarPlantilla($('seg-plantilla').value, 'seg'); } catch (e) { toast(e.message); }
+    };
     $('seg-hecho').onclick = async () => {
       try { await api('/api/seguimiento_hecho', {fingerprint: FP}); toast('Seguimiento registrado'); setTimeout(() => location.reload(), 900); }
       catch (e) { toast(e.message); }
